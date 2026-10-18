@@ -104,9 +104,11 @@ The cache added after these measurements changes the picture for repeated visits
 - Full resolution is deferred until the zoom level exceeds what the cached copy can show,
   so arrow-key browsing never pays for a 131 MB texture.
 
-Memory: up to 64 MB of cache plus the current image's texture (and, when zoomed in, its
-full-resolution bitmap). These figures are design targets; they were not re-measured
-because of the Smart App Control block.
+Memory: by default the cache is unbounded — one screen-sized entry, about 33 MB for a 4K
+display, per visited image — and the OS decides what to page out. `cacheBudgetMB` in
+settings.json caps it if that is not wanted. The current image's texture, plus its
+full-resolution bitmap when zoomed in, come on top. These figures are design targets;
+they were not re-measured because of the Smart App Control block.
 
 ## Still to measure
 

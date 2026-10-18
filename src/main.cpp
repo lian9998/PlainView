@@ -467,6 +467,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 RecordBenchRow(*app, false);
                 return 0;
             }
+            if (app && app->viewer.OnTimer(wParam)) return 0;
             return 0;
         case WM_CLOSE:
             if (app && app->bench) FinishBenchReport(*app);

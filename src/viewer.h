@@ -50,6 +50,8 @@ public:
     void OnLButtonUp(POINT clientPoint);
     void OnKeyDown(UINT vk);
     void OnDropFiles(HDROP drop);
+    // Returns true when the timer belonged to the viewer.
+    bool OnTimer(UINT_PTR timerId);
     void OnDecodeResult(DecodeResult* result);
     void OnFolderList(FolderList* list);
 
@@ -96,6 +98,8 @@ private:
     void EnsureTile(UINT tileX, UINT tileY, D2D1_SIZE_F size);
     void DrawImage(ID2D1RenderTarget* target, D2D1_SIZE_F size);
     UINT PreviewEdge() const;
+    size_t CacheBudgetBytes() const;
+    void ArmPrefetchTimer();
     void RequestFullResolution();
     void SchedulePrefetch();
     void DrawTiled(ID2D1RenderTarget* target, D2D1_SIZE_F size);
@@ -138,6 +142,8 @@ private:
     std::map<std::pair<UINT, UINT>, ComPtr<ID2D1Bitmap>> tiles_;
     std::set<std::pair<UINT, UINT>> tilesRequested_;
     UINT tileSize_ = 1024;
+    static constexpr UINT_PTR kPrefetchTimerId = 2;
+    static constexpr UINT kPrefetchDelayMs = 700;
     static constexpr size_t kMaxTiles = 24;
     static constexpr size_t kMaxTileRequests = 6;
 

@@ -22,7 +22,7 @@ std::wstring MakeCacheKey(const std::wstring& path) {
 
 void PreviewCache::Configure(UINT maxEdge, size_t budgetBytes) {
     maxEdge_ = std::max<UINT>(256, maxEdge);
-    budget_ = std::max<size_t>(budgetBytes, 8ull * 1024 * 1024);
+    budget_ = budgetBytes;
     EvictUntil(0);
 }
 
@@ -43,8 +43,8 @@ bool PreviewCache::Lookup(const std::wstring& key, PixelBuffer& pixels, ImageMet
 void PreviewCache::Store(const std::wstring& key, const PixelBuffer& pixels, const ImageMeta& meta) {
     if (pixels.Empty()) return;
     const size_t incoming = pixels.pixels.size();
-    // One entry may never take more than a third of the budget.
-    if (incoming > budget_ / 3) return;
+    // With a finite budget, one entry may never take more than a third of it.
+    if (!Unlimited() && incoming > budget_ / 3) return;
 
     const auto found = index_.find(key);
     if (found != index_.end()) {
@@ -53,8 +53,10 @@ void PreviewCache::Store(const std::wstring& key, const PixelBuffer& pixels, con
         index_.erase(found);
     }
 
-    EvictUntil(incoming);
-    if (bytes_ + incoming > budget_) return;
+    if (!Unlimited()) {
+        EvictUntil(incoming);
+        if (bytes_ + incoming > budget_) return;
+    }
 
     items_.push_front(Entry{key, pixels, meta});
     index_[key] = items_.begin();
@@ -68,6 +70,7 @@ void PreviewCache::Clear() {
 }
 
 void PreviewCache::EvictUntil(size_t incomingBytes) {
+    if (Unlimited()) return;  // the OS decides what to page out
     while (!items_.empty() &&
            (bytes_ + incomingBytes > budget_ || items_.size() >= kMaxEntries)) {
         bytes_ -= items_.back().pixels.pixels.size();

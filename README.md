@@ -24,7 +24,7 @@ until the first picture is already on screen.
 | Background | Black by default, configurable |
 | Settings | `%LOCALAPPDATA%\PlainView\settings.json` |
 | Menu | Hidden by default; `Alt` reveals `File → Open / Options / Register / Exit` |
-| Caching | Session-only, screen-resolution, 64 MB budget, neighbours prefetched |
+| Caching | Session-only, screen-resolution, unlimited by default, neighbours prefetched while idle |
 | Default app | Per-user registration; pick it in Settings → Default apps |
 
 Deliberately absent, per the plan: thumbnail database, persistent image cache,
@@ -78,13 +78,16 @@ must be immediate, without disk use and without unbounded RAM". What is implemen
 
 - **In-memory only.** Nothing is ever written to disk.
 - **Screen resolution.** Entries are downscaled to the window's longest edge (capped at
-  2560 px), not full resolution.
-- **Bounded.** 64 MB budget, 32 entries maximum, one entry may take at most a third of
-  the budget; least-recently-used entries are evicted.
+  4096 px), not full resolution. A 4K screen therefore costs about
+  3840 × 2160 × 4 B ≈ 33 MB per cached image.
+- **Budget.** Unlimited by default: browsing is allowed to fill RAM and Windows pages
+  out what it needs. Set `"cacheBudgetMB"` to cap it (then one entry may never take more
+  than a third of the budget, and least-recently-used entries are evicted).
 - **Keyed by path + size + last-write time**, so an edited file is never served stale.
-- **Prefetch.** Once an image is on screen and the folder list is ready, the previous and
-  next files are decoded in the background at screen size (lowest priority; cancelled by
-  any navigation).
+- **Idle prefetch.** Once an image is on screen and the folder list is ready, the app
+  waits ~0.7 s. If you are still on that image, the previous and next files are decoded
+  in the background at screen size (lowest priority). Any navigation cancels the pending
+  timer and any queued prefetch, so fast arrow-key scrubbing never wastes work.
 - **Full resolution is lazy.** Opening a cached file is instant; the full-resolution
   decode is only requested when you zoom past what the cached copy can resolve. That
   keeps both RAM and time-to-pixels low while browsing.
@@ -142,12 +145,14 @@ PlainView.exe --unregister
 ```json
 {
   "zoomStep": 1.15,
+  "cacheBudgetMB": 0,
   "backgroundColor": "#000000",
   "initialSizing": "fit"
 }
 ```
 
 - `zoomStep` — wheel multiplier, 1.01–3.00.
+- `cacheBudgetMB` — session cache limit in MB; `0` (default) means unlimited.
 - `backgroundColor` — `#RRGGBB` or `#AARRGGBB`.
 - `initialSizing` — `fit` or `actual` (100 %).
 

@@ -48,8 +48,9 @@ bool Viewer::InitGraphics(HWND hwnd) {
                                 static_cast<UINT>(rc.bottom - rc.top)))) {
         return false;
     }
-    // Session cache: screen-sized entries, hard RAM budget, never on disk.
-    cache_.Configure(PreviewEdge(), 64ull * 1024 * 1024);
+    // Session cache: screen-sized entries, never on disk. The budget defaults to
+    // "unlimited" (rely on the OS) and is settable in settings.json.
+    cache_.Configure(PreviewEdge(), CacheBudgetBytes());
     // If the image arrived while the device was still being created, make sure it
     // fits this device's texture limit.
     if (hasImage_ && std::max(imageWidth_, imageHeight_) > MaxTextureEdge()) ReopenCurrent();
@@ -82,6 +83,7 @@ void Viewer::Shutdown() {
 void Viewer::SetSettings(const AppSettings& settings) {
     settings_ = settings;
     background_ = settings.background;
+    if (target_) cache_.Configure(PreviewEdge(), CacheBudgetBytes());
 }
 
 void Viewer::RefreshBackground() {
@@ -147,6 +149,7 @@ void Viewer::OpenFile(const std::wstring& path) {
 
     path_ = path;
     ++generation_;
+    if (hwnd_) KillTimer(hwnd_, kPrefetchTimerId);
     openStartMs_ = NowMs();
     lastTiming_ = Timing{};
     firstFrameReported_ = false;
@@ -204,7 +207,7 @@ void Viewer::OpenFile(const std::wstring& path) {
         decoder_->RequestOpen(path_, generation_, MaxTextureEdge(), PreviewEdge());
     }
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-    if (shownFromCache) SchedulePrefetch();
+    if (shownFromCache) ArmPrefetchTimer();
 }
 
 bool Viewer::LoadBlocking(const std::wstring& path) {
@@ -283,7 +286,26 @@ UINT Viewer::PreviewEdge() const {
     const D2D1_SIZE_F size = WindowSize();
     UINT edge = static_cast<UINT>(std::max(size.width, size.height));
     if (edge == 0) edge = 1280;
-    return std::clamp<UINT>(edge, 512, 2560);
+    // One cached image never exceeds screen resolution (4K displays included).
+    return std::clamp<UINT>(edge, 512, 4096);
+}
+
+size_t Viewer::CacheBudgetBytes() const {
+    if (settings_.cacheBudgetMB <= 0) return PreviewCache::kUnlimited;
+    return static_cast<size_t>(settings_.cacheBudgetMB) * 1024 * 1024;
+}
+
+void Viewer::ArmPrefetchTimer() {
+    if (!hwnd_) return;
+    KillTimer(hwnd_, kPrefetchTimerId);
+    SetTimer(hwnd_, kPrefetchTimerId, kPrefetchDelayMs, nullptr);
+}
+
+bool Viewer::OnTimer(UINT_PTR timerId) {
+    if (timerId != kPrefetchTimerId) return false;
+    if (hwnd_) KillTimer(hwnd_, kPrefetchTimerId);
+    SchedulePrefetch();
+    return true;
 }
 
 void Viewer::RequestFullResolution() {
@@ -420,7 +442,7 @@ void Viewer::OnFolderList(FolderList* raw) {
     if (list->generation != folderGeneration_) return;
     folder_ = std::move(*list);
     prefetchScheduled_ = false;
-    SchedulePrefetch();
+    if (hasImage_) ArmPrefetchTimer();
 }
 
 void Viewer::OnDecodeResult(DecodeResult* raw) {
@@ -510,7 +532,8 @@ void Viewer::OnDecodeResult(DecodeResult* raw) {
 
     lastTiming_.readyMs = NowMs();
     if (imageReadyCallback_) imageReadyCallback_();
-    SchedulePrefetch();
+    // Prefetch only if the user lingers on this image.
+    ArmPrefetchTimer();
 }
 
 void Viewer::OnPaint() {
@@ -553,7 +576,7 @@ void Viewer::OnSize(UINT width, UINT height) {
         if (fitMode_) ApplyInitialView(WindowSize());
         else ClampCenter(WindowSize());
     }
-    cache_.Configure(PreviewEdge(), 64ull * 1024 * 1024);
+    cache_.Configure(PreviewEdge(), CacheBudgetBytes());
     if (previewOnly_ && zoom_ > cachedScale_ * 1.02) RequestFullResolution();
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }

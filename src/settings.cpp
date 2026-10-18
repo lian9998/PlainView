@@ -160,6 +160,11 @@ bool LoadSettings(AppSettings& out) {
         D2D1_COLOR_F color{};
         if (ParseString(raw, text) && ParseColor(text, color)) out.background = color;
     }
+    if (FindMember(json, "cacheBudgetMB", raw)) {
+        if (ParseNumber(raw, number) && number >= 0.0 && number <= 65536.0) {
+            out.cacheBudgetMB = static_cast<int>(number);
+        }
+    }
     if (FindMember(json, "initialSizing", raw)) {
         std::string text;
         if (ParseString(raw, text)) {

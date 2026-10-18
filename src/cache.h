@@ -22,6 +22,8 @@ public:
 
     UINT MaxEdge() const { return maxEdge_; }
     size_t BudgetBytes() const { return budget_; }
+    bool Unlimited() const { return budget_ == kUnlimited; }
+    static constexpr size_t kUnlimited = static_cast<size_t>(-1);
     size_t UsedBytes() const { return bytes_; }
     size_t Count() const { return items_.size(); }
 
