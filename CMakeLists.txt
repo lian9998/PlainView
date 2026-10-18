@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
+if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif()
 project(PlainView LANGUAGES CXX RC)
+
+# Static CRT: the executable is a single portable file with no redistributable.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 # One executable, no third-party dependencies: Win32 + WIC + Direct2D.
 add_executable(PlainView WIN32
@@ -36,6 +42,7 @@ target_link_libraries(PlainView PRIVATE
     d2d1
     windowscodecs
     comdlg32
+    comctl32
     psapi
     uuid
     advapi32
