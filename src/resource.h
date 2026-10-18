@@ -1,0 +1,22 @@
+#pragma once
+
+#ifndef IDC_STATIC
+#define IDC_STATIC (-1)
+#endif
+
+#define IDI_APP 100
+#define IDR_MAINMENU 101
+#define IDR_ACCEL 102
+#define IDD_OPTIONS 103
+
+#define ID_FILE_OPEN 1001
+#define ID_FILE_OPTIONS 1002
+#define ID_FILE_EXIT 1003
+#define ID_FILE_REGISTER 1004
+
+#define IDC_ZOOMSTEP 2001
+#define IDC_BGCHOOSE 2002
+#define IDC_BGHEX 2003
+#define IDC_SIZING_FIT 2004
+#define IDC_SIZING_ACTUAL 2005
+#define IDC_ZOOMHINT 2006

@@ -1,0 +1,9 @@
+build/
+build-cmake/
+out/
+*.obj
+*.pdb
+*.res
+*.ilk
+tests/out/
+tests/data/
