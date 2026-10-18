@@ -4,12 +4,15 @@ project(PlainView LANGUAGES CXX RC)
 # One executable, no third-party dependencies: Win32 + WIC + Direct2D.
 add_executable(PlainView WIN32
     src/cache.cpp
+    src/colordialog.cpp
     src/common.cpp
+    src/dialogutil.cpp
     src/decode.cpp
     src/folder.cpp
     src/options.cpp
     src/register.cpp
     src/settings.cpp
+    src/shellicon.cpp
     src/viewer.cpp
     src/main.cpp
     src/app.rc
@@ -33,6 +36,7 @@ target_link_libraries(PlainView PRIVATE
     d2d1
     windowscodecs
     comdlg32
+    comctl32
     psapi
     uuid
     advapi32

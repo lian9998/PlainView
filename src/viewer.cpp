@@ -1,6 +1,8 @@
 // viewer.cpp
 #include "viewer.h"
 
+#include "shellicon.h"
+
 #include <d2d1helper.h>
 #include <d3d11.h>
 
@@ -21,6 +23,14 @@ D2D1_BITMAP_INTERPOLATION_MODE InterpolationFor(double scale) {
 }
 
 bool OrientationSwapsAxes(UINT orientation) { return orientation >= 5 && orientation <= 8; }
+
+// The window has no backdrop of its own, so a translucent background colour is
+// composited over black. Alpha therefore dims the colour, exactly as the picker's
+// preview shows.
+D2D1_COLOR_F CompositeOverBlack(const D2D1_COLOR_F& color) {
+    const float alpha = std::clamp(color.a, 0.0f, 1.0f);
+    return D2D1::ColorF(color.r * alpha, color.g * alpha, color.b * alpha, 1.0f);
+}
 
 }  // namespace
 
@@ -82,12 +92,12 @@ void Viewer::Shutdown() {
 
 void Viewer::SetSettings(const AppSettings& settings) {
     settings_ = settings;
-    background_ = settings.background;
+    background_ = CompositeOverBlack(settings.background);
     if (target_) cache_.Configure(PreviewEdge(), CacheBudgetBytes());
 }
 
 void Viewer::RefreshBackground() {
-    background_ = settings_.background;
+    background_ = CompositeOverBlack(settings_.background);
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
@@ -115,6 +125,7 @@ void Viewer::DiscardTarget() {
 
 void Viewer::DiscardImage() {
     image_.Reset();
+    fileIcon_.Reset();
     overview_.Reset();
     tiles_.clear();
     tilesRequested_.clear();
@@ -519,10 +530,11 @@ void Viewer::OnDecodeResult(DecodeResult* raw) {
             lastTiming_.success = false;
         }
     } else if (!previewOnly_) {
-        // A failed decode leaves the content area black, unless a cached preview
-        // is already showing.
+        // Not a decodable image: show the icon Explorer would show for this file,
+        // at a tenth of the window width. A cached preview, if one is showing, wins.
         hasImage_ = false;
         imageWidth_ = imageHeight_ = 0;
+        LoadFileIcon();
     }
 
     // The folder is enumerated only now: the first image is up (or has failed).
@@ -594,8 +606,32 @@ HRESULT Viewer::Draw(ID2D1RenderTarget* target, D2D1_SIZE_F size) {
     target->BeginDraw();
     target->SetTransform(D2D1::Matrix3x2F::Identity());
     target->Clear(background_);
-    if (hasImage_ && (image_ || overview_)) DrawImage(target, size);
+    if (hasImage_ && (image_ || overview_)) {
+        DrawImage(target, size);
+    } else if (fileIcon_) {
+        DrawFileIcon(target, size);
+    }
     return target->EndDraw();
+}
+
+void Viewer::LoadFileIcon() {
+    fileIcon_.Reset();
+    if (!target_ || path_.empty()) return;
+    ComPtr<ID2D1Bitmap> icon;
+    UINT pixels = 0;
+    if (SUCCEEDED(CreateShellIconBitmap(target_, path_, icon, &pixels))) {
+        fileIcon_ = icon;
+    }
+}
+
+void Viewer::DrawFileIcon(ID2D1RenderTarget* target, D2D1_SIZE_F size) {
+    if (!fileIcon_ || size.width <= 0.0f) return;
+    // One tenth of the window width, centred.
+    const float extent = std::max(16.0f, size.width / 10.0f);
+    const D2D1_RECT_F destination = D2D1::RectF(
+        (size.width - extent) / 2.0f, (size.height - extent) / 2.0f,
+        (size.width + extent) / 2.0f, (size.height + extent) / 2.0f);
+    target->DrawBitmap(fileIcon_.Get(), &destination, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
 void Viewer::DrawImage(ID2D1RenderTarget* target, D2D1_SIZE_F size) {

@@ -3,9 +3,10 @@
 
 #include "resource.h"
 
-#include <d2d1helper.h>
+#include "colordialog.h"
+#include "dialogutil.h"
 
-#include <commdlg.h>
+#include <d2d1helper.h>
 #include <windowsx.h>
 
 #include <algorithm>
@@ -33,73 +34,13 @@ std::wstring FormatColorHex(const D2D1_COLOR_F& color) {
         return static_cast<int>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
     };
     wchar_t buffer[16];
-    swprintf_s(buffer, L"#%02X%02X%02X", channel(color.r), channel(color.g), channel(color.b));
-    return buffer;
-}
-
-COLORREF ToColorRef(const D2D1_COLOR_F& color) {
-    auto channel = [](float value) {
-        return static_cast<BYTE>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
-    };
-    return RGB(channel(color.r), channel(color.g), channel(color.b));
-}
-
-D2D1_COLOR_F FromColorRef(COLORREF color) {
-    return D2D1::ColorF(GetRValue(color) / 255.0f, GetGValue(color) / 255.0f,
-                        GetBValue(color) / 255.0f, 1.0f);
-}
-
-// The dialog template is authored at 96 DPI. Per-monitor v2 processes do not get
-// automatic dialog scaling, so scale every control once, when the dialog opens.
-void ScaleDialogToDpi(HWND dialog, OptionsContext* context) {
-    const UINT dpi = GetDpiForWindow(dialog);
-    if (dpi == 0 || dpi == 96) return;
-    const double scale = dpi / 96.0;
-
-    RECT dialogRect{};
-    GetWindowRect(dialog, &dialogRect);
-    SetWindowPos(dialog, nullptr, 0, 0,
-                 static_cast<int>((dialogRect.right - dialogRect.left) * scale),
-                 static_cast<int>((dialogRect.bottom - dialogRect.top) * scale),
-                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-
-    struct ScaleData {
-        double scale;
-        HWND dialog;
-    } data{scale, dialog};
-
-    EnumChildWindows(
-        dialog,
-        [](HWND child, LPARAM param) -> BOOL {
-            auto* data = reinterpret_cast<ScaleData*>(param);
-            RECT rect{};
-            GetWindowRect(child, &rect);
-            MapWindowPoints(HWND_DESKTOP, data->dialog, reinterpret_cast<POINT*>(&rect), 2);
-            SetWindowPos(child, nullptr, static_cast<int>(rect.left * data->scale),
-                         static_cast<int>(rect.top * data->scale),
-                         static_cast<int>((rect.right - rect.left) * data->scale),
-                         static_cast<int>((rect.bottom - rect.top) * data->scale),
-                         SWP_NOZORDER | SWP_NOACTIVATE);
-            return TRUE;
-        },
-        reinterpret_cast<LPARAM>(&data));
-
-    const HFONT baseFont = reinterpret_cast<HFONT>(SendMessageW(dialog, WM_GETFONT, 0, 0));
-    LOGFONTW logFont{};
-    if (baseFont && GetObjectW(baseFont, sizeof(logFont), &logFont) == sizeof(logFont)) {
-        logFont.lfHeight = static_cast<LONG>(logFont.lfHeight * scale);
-        if (logFont.lfWidth) logFont.lfWidth = static_cast<LONG>(logFont.lfWidth * scale);
-        context->scaledFont = CreateFontIndirectW(&logFont);
-        if (context->scaledFont) {
-            EnumChildWindows(
-                dialog,
-                [](HWND child, LPARAM param) -> BOOL {
-                    SendMessageW(child, WM_SETFONT, static_cast<WPARAM>(param), TRUE);
-                    return TRUE;
-                },
-                reinterpret_cast<LPARAM>(context->scaledFont));
-        }
+    if (channel(color.a) < 255) {
+        swprintf_s(buffer, L"#%02X%02X%02X%02X", channel(color.a), channel(color.r),
+                   channel(color.g), channel(color.b));
+    } else {
+        swprintf_s(buffer, L"#%02X%02X%02X", channel(color.r), channel(color.g), channel(color.b));
     }
+    return buffer;
 }
 
 INT_PTR CALLBACK OptionsProc(HWND dialog, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -117,36 +58,18 @@ INT_PTR CALLBACK OptionsProc(HWND dialog, UINT message, WPARAM wParam, LPARAM lP
                                  : IDC_SIZING_ACTUAL);
             SetDlgItemTextW(dialog, IDC_BGHEX, FormatColorHex(context->settings.background).c_str());
 
-            HWND parent = GetParent(dialog);
-            ScaleDialogToDpi(dialog, context);
-
-            RECT dialogRect{}, parentRect{};
-            GetWindowRect(dialog, &dialogRect);
-            if (parent && GetWindowRect(parent, &parentRect)) {
-                const int width = dialogRect.right - dialogRect.left;
-                const int height = dialogRect.bottom - dialogRect.top;
-                const int x = parentRect.left + ((parentRect.right - parentRect.left) - width) / 2;
-                const int y = parentRect.top + ((parentRect.bottom - parentRect.top) - height) / 2;
-                SetWindowPos(dialog, nullptr, x, y, 0, 0,
-                             SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-            }
+            ScaleDialogToDpi(dialog, &context->scaledFont);
+            CenterDialogOverOwner(dialog, GetParent(dialog));
             return TRUE;
         }
 
         case WM_COMMAND:
             switch (LOWORD(wParam)) {
                 case IDC_BGCHOOSE: {
-                    static COLORREF customColors[16] = {};
-                    CHOOSECOLORW choose{};
-                    choose.lStructSize = sizeof(choose);
-                    choose.hwndOwner = dialog;
-                    choose.rgbResult = ToColorRef(context->settings.background);
-                    choose.lpCustColors = customColors;
-                    choose.Flags = CC_FULLOPEN | CC_RGBINIT;
-                    if (ChooseColorW(&choose)) {
-                        context->settings.background = FromColorRef(choose.rgbResult);
-                        SetDlgItemTextW(dialog, IDC_BGHEX,
-                                        FormatColorHex(context->settings.background).c_str());
+                    D2D1_COLOR_F color = context->settings.background;
+                    if (ShowBackgroundColorDialog(dialog, GetModuleHandleW(nullptr), color)) {
+                        context->settings.background = color;
+                        SetDlgItemTextW(dialog, IDC_BGHEX, FormatColorHex(color).c_str());
                     }
                     return TRUE;
                 }

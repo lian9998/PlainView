@@ -13,6 +13,8 @@
 
 #include <d2d1.h>
 
+#include <d2d1.h>
+
 #include <functional>
 #include <map>
 #include <memory>
@@ -97,6 +99,8 @@ private:
     void EnsureFolderScan();
     void EnsureTile(UINT tileX, UINT tileY, D2D1_SIZE_F size);
     void DrawImage(ID2D1RenderTarget* target, D2D1_SIZE_F size);
+    void DrawFileIcon(ID2D1RenderTarget* target, D2D1_SIZE_F size);
+    void LoadFileIcon();
     UINT PreviewEdge() const;
     size_t CacheBudgetBytes() const;
     void ArmPrefetchTimer();
@@ -138,6 +142,7 @@ private:
     double overviewScale_ = 1.0;
 
     ComPtr<ID2D1Bitmap> image_;
+    ComPtr<ID2D1Bitmap> fileIcon_;  // shown when the file is not a decodable image
     ComPtr<ID2D1Bitmap> overview_;
     std::map<std::pair<UINT, UINT>, ComPtr<ID2D1Bitmap>> tiles_;
     std::set<std::pair<UINT, UINT>> tilesRequested_;

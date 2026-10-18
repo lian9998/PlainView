@@ -111,12 +111,16 @@ bool ParseColor(const std::string& text, D2D1_COLOR_F& out) {
 
 std::string FormatColor(const D2D1_COLOR_F& color) {
     auto channel = [](float v) {
-        const int scaled = static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
-        return scaled;
+        return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
     };
     char buffer[16];
-    std::snprintf(buffer, sizeof(buffer), "#%02X%02X%02X", channel(color.r), channel(color.g),
-                  channel(color.b));
+    if (channel(color.a) < 255) {
+        std::snprintf(buffer, sizeof(buffer), "#%02X%02X%02X%02X", channel(color.a),
+                      channel(color.r), channel(color.g), channel(color.b));
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "#%02X%02X%02X", channel(color.r), channel(color.g),
+                      channel(color.b));
+    }
     return buffer;
 }
 

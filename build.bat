@@ -29,12 +29,13 @@ echo [2/2] compiling and linking
 cl /nologo /std:c++20 /EHsc /W4 /WX /permissive- /utf-8 ^
    /DUNICODE /D_UNICODE !CFLAGS! ^
    /Fo%OUTDIR%\ /Fd%OUTDIR%\ ^
-   src\cache.cpp src\common.cpp src\decode.cpp src\folder.cpp src\register.cpp src\settings.cpp ^
+   src\cache.cpp src\colordialog.cpp src\common.cpp src\decode.cpp src\dialogutil.cpp ^
+   src\folder.cpp src\register.cpp src\settings.cpp src\shellicon.cpp ^
    src\viewer.cpp src\options.cpp src\main.cpp ^
    /Fe%OUTDIR%\PlainView.exe ^
    /link %OUTDIR%\app.res /SUBSYSTEM:WINDOWS ^
    user32.lib gdi32.lib ole32.lib oleaut32.lib shell32.lib shlwapi.lib ^
-   d2d1.lib windowscodecs.lib comdlg32.lib psapi.lib uuid.lib advapi32.lib || exit /b 1
+   d2d1.lib windowscodecs.lib comdlg32.lib comctl32.lib psapi.lib uuid.lib advapi32.lib || exit /b 1
 
 echo.
 echo Built %OUTDIR%\PlainView.exe

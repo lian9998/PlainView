@@ -1,5 +1,6 @@
 // main.cpp — PlainView entry point, window plumbing, bench and capture modes.
 #include "common.h"
+#include "colordialog.h"
 #include "decode.h"
 #include "options.h"
 #include "register.h"
@@ -9,6 +10,7 @@
 
 #include <d2d1.h>
 #include <d2d1helper.h>
+#include <commctrl.h>
 #include <psapi.h>
 #include <shellapi.h>
 #include <shobjidl.h>
@@ -120,6 +122,16 @@ void ShowOpenDialog(App& app) {
         app.viewer.OpenFile(path);
         CoTaskMemFree(path);
     }
+}
+
+void ShowBackgroundColor(App& app) {
+    D2D1_COLOR_F color = app.settings.background;
+    if (!ShowBackgroundColorDialog(app.hwnd, app.instance, color)) return;
+    app.settings.background = color;
+    app.viewer.SetSettings(app.settings);
+    app.viewer.RefreshBackground();
+    SaveSettings(app.settings);
+    if (app.hwnd) InvalidateRect(app.hwnd, nullptr, FALSE);
 }
 
 void ShowOptions(App& app) {
@@ -415,6 +427,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 case ID_FILE_OPTIONS:
                     ShowOptions(*app);
                     return 0;
+                case ID_FILE_BACKGROUND:
+                    ShowBackgroundColor(*app);
+                    return 0;
                 case ID_FILE_REGISTER: {
                     const bool registered = IsImageHandlerRegistered();
                     std::wstring error;
@@ -584,6 +599,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE))) {
         return 1;
     }
+
+    INITCOMMONCONTROLSEX commonControls{sizeof(commonControls),
+                                        ICC_BAR_CLASSES | ICC_STANDARD_CLASSES};
+    InitCommonControlsEx(&commonControls);
 
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
