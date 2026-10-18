@@ -164,6 +164,11 @@ bool LoadSettings(AppSettings& out) {
             out.cacheBudgetMB = static_cast<int>(number);
         }
     }
+    if (FindMember(json, "prefetchDepth", raw)) {
+        if (ParseNumber(raw, number) && number >= 0.0 && number <= 20.0) {
+            out.prefetchDepth = static_cast<int>(number);
+        }
+    }
     if (FindMember(json, "initialSizing", raw)) {
         std::string text;
         if (ParseString(raw, text)) {

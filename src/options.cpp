@@ -52,6 +52,8 @@ INT_PTR CALLBACK OptionsProc(HWND dialog, UINT message, WPARAM wParam, LPARAM lP
                                  ? IDC_SIZING_FIT
                                  : IDC_SIZING_ACTUAL);
             SetDlgItemTextW(dialog, IDC_BGHEX, FormatColorHex(context->settings.background).c_str());
+            SetDlgItemInt(dialog, IDC_PREFETCH, static_cast<UINT>(context->settings.prefetchDepth),
+                          FALSE);
 
             ScaleDialogToDpi(dialog, &context->scaledFont);
             CenterDialogOverOwner(dialog, GetParent(dialog));
@@ -80,7 +82,16 @@ INT_PTR CALLBACK OptionsProc(HWND dialog, UINT message, WPARAM wParam, LPARAM lP
                         SetFocus(GetDlgItem(dialog, IDC_ZOOMSTEP));
                         return TRUE;
                     }
+                    BOOL numberOk = FALSE;
+                    const UINT prefetch = GetDlgItemInt(dialog, IDC_PREFETCH, &numberOk, FALSE);
+                    if (!numberOk || prefetch > 20) {
+                        MessageBoxW(dialog, L"Prefetch must be a number between 0 and 20.",
+                                    L"Options", MB_OK | MB_ICONWARNING);
+                        SetFocus(GetDlgItem(dialog, IDC_PREFETCH));
+                        return TRUE;
+                    }
                     context->settings.zoomStep = value;
+                    context->settings.prefetchDepth = static_cast<int>(prefetch);
                     context->settings.initialSizing =
                         IsDlgButtonChecked(dialog, IDC_SIZING_FIT) == BST_CHECKED
                             ? AppSettings::InitialSizing::Fit

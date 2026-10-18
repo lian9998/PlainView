@@ -99,8 +99,8 @@ The cache added after these measurements changes the picture for repeated visits
   plus a box-filter downscale (~40 ms) to fill the cache.
 - Returning to a file already in the cache: no decode at all — the bitmap is uploaded
   from the cached pixels (a few ms for ~4 MB).
-- Prefetch of the previous/next file runs on the decode worker after the current image
-  is displayed; it is dropped as soon as the user navigates.
+- Prefetch runs on two dedicated threads (one per direction) after ~0.7 s without
+  navigation, `prefetchDepth` images each way (0-20, default 3).
 - Full resolution is deferred until the zoom level exceeds what the cached copy can show,
   so arrow-key browsing never pays for a 131 MB texture.
 

@@ -19,6 +19,7 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <unordered_set>
 #include <utility>
 
 class Viewer {
@@ -138,6 +139,8 @@ private:
     double cachedScale_ = 1.0;
     bool fullRequested_ = false;
     bool prefetchScheduled_ = false;
+    std::wstring prefetchDirectory_;
+    std::unordered_set<std::wstring> prefetchRequested_;
     PreviewCache cache_;
     double overviewScale_ = 1.0;
 

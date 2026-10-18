@@ -87,6 +87,8 @@ void Viewer::SetSettings(const AppSettings& settings) {
     settings_ = settings;
     background_ = settings.background;
     if (target_) cache_.Configure(PreviewEdge(), CacheBudgetBytes());
+    prefetchScheduled_ = false;
+    if (target_ && hwnd_) ArmPrefetchTimer();
 }
 
 void Viewer::RefreshBackground() {
@@ -167,6 +169,11 @@ void Viewer::OpenFile(const std::wstring& path) {
 
     // Navigation inside one folder reuses the list that is already in memory.
     const std::wstring dir = DirectoryOf(path_);
+    if (_wcsicmp(dir.c_str(), prefetchDirectory_.c_str()) != 0) {
+        prefetchDirectory_ = dir;
+        prefetchRequested_.clear();
+        if (decoder_) decoder_->ClearPrefetchQueue();
+    }
     if (!folder_.names.empty() && _wcsicmp(folder_.directory.c_str(), dir.c_str()) == 0) {
         const std::wstring name = FileNameOf(path_);
         folder_.index = -1;
@@ -322,15 +329,24 @@ void Viewer::SchedulePrefetch() {
     if (prefetchScheduled_ || !decoder_ || folder_.names.size() < 2 || folder_.index < 0) return;
     prefetchScheduled_ = true;
 
+    const int depth = std::clamp(settings_.prefetchDepth, 0, 20);
+    if (depth == 0) return;
+
     const int count = static_cast<int>(folder_.names.size());
     const UINT edge = PreviewEdge();
-    for (int delta : {1, -1}) {
-        const int index = ((folder_.index + delta) % count + count) % count;
-        if (index == folder_.index) continue;
-        const std::wstring path =
-            JoinPath(folder_.directory, folder_.names[static_cast<size_t>(index)]);
-        if (cache_.Contains(MakeCacheKey(path))) continue;
-        decoder_->RequestPrefetch(path, generation_, edge);
+    for (int direction : {-1, 1}) {
+        for (int step = 1; step <= depth; ++step) {
+            const int index = ((folder_.index + direction * step) % count + count) % count;
+            if (index == folder_.index) break;
+            const std::wstring path =
+                JoinPath(folder_.directory, folder_.names[static_cast<size_t>(index)]);
+            const std::wstring key = MakeCacheKey(path);
+            if (cache_.Contains(key)) continue;
+            if (!prefetchRequested_.insert(key).second) continue;
+            decoder_->RequestPrefetch(
+                path, edge,
+                direction > 0 ? PrefetchDirection::Forward : PrefetchDirection::Backward);
+        }
     }
 }
 

@@ -25,7 +25,7 @@ until the first picture is already on screen.
 | Non-images | The file's Explorer icon at 1/10 of the window width instead of a blank window |
 | Settings | `%LOCALAPPDATA%\PlainView\settings.json` |
 | Menu | Hidden by default; `Alt` reveals it (native menu activation), `Alt`/`Esc` hides it again |
-| Caching | Session-only, screen-resolution, unlimited by default, neighbours prefetched while idle |
+| Caching | Session-only, screen-resolution, unlimited by default; neighbours prefetched in both directions |
 | Default app | Per-user registration; pick it in Settings → Default apps |
 
 Deliberately absent, per the plan: thumbnail database, persistent image cache,
@@ -91,12 +91,15 @@ must be immediate, without disk use and without unbounded RAM". What is implemen
   out what it needs. Set `"cacheBudgetMB"` to cap it (then one entry may never take more
   than a third of the budget, and least-recently-used entries are evicted).
 - **Keyed by path + size + last-write time**, so an edited file is never served stale.
-- **Idle prefetch.** Once an image is on screen and the folder list is ready, the app
-  waits ~0.7 s. If you are still on that image, the previous and next files are decoded
-  in the background at screen size. Any navigation cancels the pending timer and drops
-  queued prefetches, so fast arrow-key scrubbing never wastes work.
-- **Prefetch cannot delay navigation.** It runs on its own decode thread; the thread that
-  serves the file you just asked for is never behind a background decode.
+- **Idle prefetch, both directions.** Once an image is on screen and the folder list is
+  ready, the app waits ~0.7 s. If you are still there, up to `prefetchDepth` images
+  forward and the same number backward are decoded at screen size. Two dedicated decode
+  threads serve the two directions, so they never wait for each other; both run apart
+  from the interactive decode, so a prefetch can never delay the file you just opened.
+  Navigation restarts the idle timer and any change of folder drops the queues.
+- **Only the current image is full resolution.** The displayed image is decoded normally
+  (that is what makes 1:1 zooming exact); cached and prefetched neighbours are always
+  screen-sized, so they cost ~33 MB each on a 4K display rather than the source size.
 - **Full resolution is lazy.** Opening a cached file is instant; the full-resolution
   decode is only requested when you zoom past what the cached copy can resolve. That
   keeps both RAM and time-to-pixels low while browsing.
@@ -155,6 +158,7 @@ PlainView.exe --unregister
 {
   "zoomStep": 1.15,
   "cacheBudgetMB": 0,
+  "prefetchDepth": 3,
   "backgroundColor": "#000000",
   "initialSizing": "fit"
 }
@@ -162,6 +166,7 @@ PlainView.exe --unregister
 
 - `zoomStep` — wheel multiplier, 1.01–3.00.
 - `cacheBudgetMB` — session cache limit in MB; `0` (default) means unlimited.
+- `prefetchDepth` — images to prefetch in each direction, 0–20; `0` disables prefetching.
 - `backgroundColor` — `#RRGGBB`, opaque. An old `#AARRGGBB` value is still read, but its
   alpha byte is ignored. `File → Background Color…` opens the native Windows colour
   dialog.

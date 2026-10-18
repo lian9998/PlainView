@@ -36,6 +36,10 @@ struct PixelBuffer {
     }
 };
 
+// Prefetching is split into two directions, each with its own thread, so that
+// looking forward and looking back never wait for each other.
+enum class PrefetchDirection { Forward = 0, Backward = 1 };
+
 enum class DecodeKind {
     Full,      // whole image, fits in one GPU texture
     Overview,  // downscaled stand-in for an image too large for one texture
@@ -121,7 +125,8 @@ public:
 
     // Background, lowest priority: decodes a screen-sized copy of another file so
     // that navigating to it later needs no disk work.
-    void RequestPrefetch(const std::wstring& path, UINT generation, UINT maxEdge);
+    void RequestPrefetch(const std::wstring& path, UINT maxEdge, PrefetchDirection direction);
+    void ClearPrefetchQueue();
 
 private:
     struct Job {
@@ -137,11 +142,10 @@ private:
     };
 
     void ThreadMain();
-    void PrefetchThreadMain();
+    void PrefetchThreadMain(PrefetchDirection direction);
     void HandleOpen(const Job& job);
     void HandleTile(const Job& job);
     void HandlePrefetch(const Job& job);
-    void DropQueuedPrefetches();
     bool IsCancelled(UINT generation) const;
     void PostResult(DecodeResult&& result);
 
@@ -155,10 +159,10 @@ private:
 
     // Prefetching runs on its own thread so that an in-flight background decode
     // can never delay opening the file the user just asked for.
-    std::thread prefetchThread_;
+    std::thread prefetchThreads_[2];
+    std::deque<Job> prefetchQueues_[2];
     std::mutex prefetchMutex_;
     std::condition_variable prefetchCv_;
-    std::deque<Job> prefetchQueue_;
 
     std::atomic<bool> stopping_{false};
 
