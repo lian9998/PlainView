@@ -1,72 +1,71 @@
 # Measurements
 
-All numbers from this machine (WSL2 on Windows 11, host `LAPTOP-LB8IPAST`), building with
-MSVC 14.50 (VS 2026) and running the x64 Windows binary.
+Windows 11 x64, MSVC 14.50 (Visual Studio 2026), Release build (`/O2 /MT`),
+1200 × 800 window. Test images were stored on a local NTFS disk, not the WSL
+mount: the same bytes read through `\\wsl.localhost\Ubuntu\...` (9P) decode
+several times more slowly and make the numbers meaningless.
 
-Test file: `C:\Users\lianzheyuan\source\repos\big-image.jpg`
-— JPEG, 7008 × 4672 (32.7 MP), 27,482,813 bytes, EXIF orientation 1, no ICC profile.
-Window: 1200 × 800 client area, fit view.
+| File | Size | Notes |
+| --- | --- | --- |
+| `big-image.jpg` | 7008 × 4672 (32.7 MP), 27.5 MB | EXIF orientation 1, no ICC profile |
+| `demo-photo.jpg` | 4000 × 2628 (10.5 MP), 5.4 MB | embedded sRGB ICC profile |
 
-## How each number is produced
+## Method
 
-`PlainView.exe --bench report.txt <file>` opens the real window, requests the file, and
-records:
+`tools/bench.ps1` copies the executable and the inputs onto the local disk, runs
+`PlainView.exe --bench report.txt <file>` five times per image, and reports the
+minimum, median and maximum. A bench run opens the real window, requests the
+file, and records:
 
-- `open+metadata` — decoder creation, frame metadata, EXIF and colour-context queries.
+- `open+metadata` — decoder creation, frame metadata, EXIF and colour queries.
 - `pixel decode` — the WIC copy/conversion pass that produces BGRA pixels.
-- `preview` — decoder-scaled pass (only for images above 64 MP in the final build).
 - `request issued` — process-relative time the UI asked for the file.
-- `first frame` — the first `EndDraw` that contains the image (this is the user-visible
-  moment, measured from process start).
-- `full detail` — when the full-resolution bitmap replaced the preview.
-- `peak working set` — `GetProcessMemoryInfo`, at the moment the image is ready.
+- `first frame` — the first `EndDraw` that contains the image, measured from
+  process start (the user-visible moment).
+- `texture upload` — the Direct2D bitmap upload, done off the UI thread.
+- `peak working set` — `GetProcessMemoryInfo` when the image became ready.
 
-The benchmark quits by itself and writes the report; no logging exists in normal use.
+The benchmark quits by itself and writes the report. There is no logging in
+normal use.
 
-## Iterations (7008 × 4672 JPEG)
+## Results (five runs each)
 
-| Build | First frame | Full detail | Notes |
-| --- | --- | --- | --- |
-| v1: single decode, GPU init before decode | 1182 ms | 1182 ms | decode 751 ms, then device init and upload |
-| v2: + decoder-scaled preview (2048 edge) | 806 ms | 1366 ms | preview still paid a full decode |
-| v3: + decode starts before Direct2D device | 698 ms | 1343 ms | GPU init (~300 ms) now overlaps decoding |
-| v4: final tree (preview only above 64 MP) | not measured | not measured | see verification note in README |
+| Measurement | 33 MP JPEG | 10.5 MP JPEG, sRGB profile |
+| --- | --- | --- |
+| First frame, median | **711.4 ms** | **217.1 ms** |
+| First frame, min–max | 676.0–919.1 ms | 212.1–243.4 ms |
+| Pixel decode, median | 566.2 ms | 125.5 ms |
+| Texture upload, median | 61.1 ms | 11.9 ms |
+| Peak working set | 449 MB | 195 MB |
 
-Detailed v3 run:
+The spread on the 33 MP file is dominated by the 131 MB texture upload
+(44.5–190.3 ms), which competes with the decode for memory bandwidth.
 
-```
-image size      : 7008 x 4672  (exif orientation 1, color managed no, single texture)
-decode worker   : open+metadata 24.9 ms, pixel decode 624.2 ms, total 1271.3 ms
-preview         : 3504 x 2336, 622.1 ms decode, 42.7 ms upload
-request issued  : 28.7 ms after process start
-first frame     : 698.0 ms after process start  (decoder-scaled preview)
-full detail     : 1342.9 ms after process start
-peak working set: 506.8 MB
-```
+## What each change bought
 
-### What the iterations showed
-
-1. **GPU initialisation was on the critical path.** Creating the D3D/D2D device costs
-   ~300 ms on a cold start. Requesting the decode first (and creating the device while
-   the worker runs) removed it from the time-to-first-frame entirely.
-2. **WIC's scaled JPEG decode is not cheaper.** `IWICBitmapSourceTransform` reported
-   half size (3504 × 2336) and produced it, but took 622 ms versus 624 ms for the full
-   decode, i.e. the decoder still touches every source pixel. A preview therefore only
-   helps by reducing the texture upload (43 ms instead of ~70 ms) while delaying the
-   full-resolution image by a whole extra decode.
-3. **The upload is not the bottleneck.** 131 MB of BGRA reached the GPU in ~70 ms;
-   decoding is ~9× more expensive than uploading.
-
-Consequences in the shipped code: the preview survives only for images above 64 MP
-(`kPreviewPixelThreshold` in `src/decode.cpp`), where a full decode alone would not meet
-the one-second target; everything else goes straight to full resolution.
+1. **GPU initialisation was on the critical path.** Creating the D3D/D2D device
+   costs roughly 300 ms cold. Requesting the decode first, then creating the
+   device while the worker runs, removed it from the time-to-first-frame
+   entirely.
+2. **There is no preview pass.** `IWICBitmapSourceTransform` reports and produces
+   a half-size image, but it cost 622 ms versus 624 ms for the full decode: the
+   decoder still touches every source pixel. A preview would only delay the
+   full-resolution image, so the first frame is the full image.
+3. **The upload is not the bottleneck.** 131 MB of BGRA reached the GPU in
+   44–190 ms while the decode took ~566 ms.
+4. **An sRGB ICC transform is pure cost.** A 10.5 MP photo with the usual
+   embedded "sRGB" profile decoded in 783 ms with the WIC transform and 482 ms
+   with the profile stripped. `src/decode.cpp` now reads the ICC description tag
+   and skips the transform when the profile is sRGB; the same file measures
+   125 ms decode and 217 ms first frame on the local disk, matching a copy with
+   the profile removed (134 ms / 218 ms). Adobe RGB, Display P3 and
+   camera-specific profiles still go through the transform.
 
 ## Browser baseline
 
-The plan asks for a comparison against the same file dropped into a browser.
 `tests/browser-bench.mjs` drives Chromium over the DevTools protocol using Node's
 built-in WebSocket (no npm dependencies), loads the image as a `file://` URL in a
-1200 × 800 window, and reads `largest-contentful-paint` and the navigation timing.
+1200 × 800 window, and reads `largest-contentful-paint` and navigation timing.
 
 ```bash
 node tests/browser-bench.mjs \
@@ -74,56 +73,43 @@ node tests/browser-bench.mjs \
   file:///mnt/c/Users/lianzheyuan/source/repos/big-image.jpg 3
 ```
 
-Three runs, Chromium 1228 headless (software rendering, no GPU):
+Three runs, Chromium 1228 headless (software rendering, no GPU): median LCP
+656 ms, median load event 538.8 ms.
 
-| Run | load event | LCP | process total |
-| --- | --- | --- | --- |
-| 1 | 471.7 ms | (not recorded) | 2230 ms |
-| 2 | 567.2 ms | 696 ms | 1107 ms |
-| 3 | 538.8 ms (median) | 656 ms (median) | — |
+The browser paints at ~656 ms after navigation inside an already running
+process; PlainView shows the 33 MP image at ~711 ms **including process start,
+window creation and GPU device creation**. At this file size the two are in the
+same class; for ordinary photos the viewer is far ahead (217 ms for 10.5 MP).
 
-The browser paints the image at ~656 ms after navigation start inside an already running
-process; PlainView shows it at ~698 ms **including process start, window creation and
-GPU device creation**. At this file size the two are in the same class, and the plan's
-target ("at least as quickly as the same file in a browser") holds.
-
-Caveats: the browser ran on the Linux side of WSL2 with software rasterisation, so the
-numbers are indicative rather than a controlled comparison. Re-run the script on the
-Windows side (Edge, `--remote-debugging-port`) for a same-OS baseline.
+Caveat: Chromium ran on the Linux side of WSL2 with software rasterisation and
+read the file through `/mnt/c`, so this is indicative rather than a controlled
+same-OS comparison.
 
 ## Session cache and prefetch
 
-The cache added after these measurements changes the picture for repeated visits:
-
-- First open of a file: unchanged (one full decode, ~624 ms for the 33 MP test image)
-  plus a box-filter downscale (~40 ms) to fill the cache.
-- Returning to a file already in the cache: no decode at all — the bitmap is uploaded
-  from the cached pixels (a few ms for ~4 MB).
+- The cache is RAM-only and bounded at 256 MB by default. Entries are
+  screen-sized: the window's longest edge, capped at 4096 px, so a 4K display
+  costs about 33 MB per entry. A budget of 0 means "no limit".
+- The first open of a file: one full decode (566 ms for the 33 MP test image)
+  plus a box-filter downscale to fill the cache.
+- Returning to a cached file: no decode, just the upload (a few milliseconds for
+  a screen-sized entry).
+- Full resolution is deferred when the cached copy was shown first: it is
+  requested once the zoom level exceeds what the cached copy can resolve.
 - Prefetch runs on two dedicated threads (one per direction) after ~0.7 s without
-  navigation, `prefetchDepth` images each way (0-20, default 3).
-- Full resolution is deferred until the zoom level exceeds what the cached copy can show,
-  so arrow-key browsing never pays for a 131 MB texture.
+  navigation, `prefetchDepth` images each way (0–20, default 3).
 
-Memory: by default the cache is unbounded — one screen-sized entry, about 33 MB for a 4K
-display, per visited image — and the OS decides what to page out. `cacheBudgetMB` in
-settings.json caps it if that is not wanted. The current image's texture, plus its
-full-resolution bitmap when zoomed in, come on top. These figures are design targets;
-they were not re-measured because of the Smart App Control block.
+## DPI
 
-## Background colour
+Dialogs are created by the dialog manager at the system DPI. The Options dialog
+is then rescaled by `monitorDpi / systemDpi`, not by `dpi / 96`: on a 200% system
+the old code produced a 1768 × 1662 dialog instead of 884 × 831.
 
-Opaque only, by decision: the background is a plain RGB colour chosen through the native
-Windows dialog. An earlier alpha slider was removed — the window has no backdrop of its
-own, so an alpha byte could only be composited over black, and a genuinely see-through
-background would require a layered or DirectComposition window.
+## Not measured here
 
-## Still to measure
-
-These need a build that can be executed (see the Smart App Control note in the README):
-
-- PNG, WebP and very large (> 16384 px edge) files; animated formats show one frame.
-- Responsiveness while holding an arrow key through a large folder, and folder scan time
-  for tens of thousands of files.
-- 4K display at 100 %, 150 % and 200 % scaling.
+- 4K display at 100%, 150% and 200% scaling (this machine runs a 200% system).
+- Holding an arrow key through a folder of tens of thousands of images, and the
+  folder scan time for such a folder.
+- Images above the 16384 px texture limit, and PNG/WebP/HEIC decode times.
 - A filesystem-write audit while opening, navigating and closing (expected: only
-  `%LOCALAPPDATA%\PlainView\settings.json`, and only after pressing OK in Options).
+  `%LOCALAPPDATA%\PlainView\settings.json`, and only after OK in Options).
