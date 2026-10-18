@@ -48,6 +48,8 @@ bool Viewer::InitGraphics(HWND hwnd) {
                                 static_cast<UINT>(rc.bottom - rc.top)))) {
         return false;
     }
+    // Session cache: screen-sized entries, hard RAM budget, never on disk.
+    cache_.Configure(PreviewEdge(), 64ull * 1024 * 1024);
     // If the image arrived while the device was still being created, make sure it
     // fits this device's texture limit.
     if (hasImage_ && std::max(imageWidth_, imageHeight_) > MaxTextureEdge()) ReopenCurrent();
@@ -116,6 +118,9 @@ void Viewer::DiscardImage() {
     tilesRequested_.clear();
     hasImage_ = false;
     tiled_ = false;
+    previewOnly_ = false;
+    cachedScale_ = 1.0;
+    fullRequested_ = false;
     overviewScale_ = 1.0;
     imageWidth_ = imageHeight_ = 0;
     meta_ = ImageMeta{};
@@ -145,7 +150,7 @@ void Viewer::OpenFile(const std::wstring& path) {
     openStartMs_ = NowMs();
     lastTiming_ = Timing{};
     firstFrameReported_ = false;
-    previewPending_ = false;
+    prefetchScheduled_ = false;
     folderScanStarted_ = false;
     fitMode_ = true;
     DiscardImage();
@@ -168,8 +173,38 @@ void Viewer::OpenFile(const std::wstring& path) {
         folder_ = FolderList{};
     }
 
-    if (decoder_) decoder_->RequestOpen(path_, generation_, MaxTextureEdge());
+    // Session cache first: a file seen before appears with no disk work at all.
+    bool shownFromCache = false;
+    if (target_) {
+        PixelBuffer cached;
+        ImageMeta cachedMeta;
+        if (cache_.Lookup(MakeCacheKey(path_), cached, cachedMeta) && !cached.Empty()) {
+            const bool swapped = OrientationSwapsAxes(cachedMeta.orientation);
+            const UINT fullWidth = swapped ? cachedMeta.srcHeight : cachedMeta.srcWidth;
+            const UINT fullHeight = swapped ? cachedMeta.srcWidth : cachedMeta.srcHeight;
+            if (CreateBitmap(cached, image_)) {
+                meta_ = cachedMeta;
+                imageWidth_ = fullWidth;
+                imageHeight_ = fullHeight;
+                hasImage_ = true;
+                tiled_ = false;
+                cachedScale_ = static_cast<double>(cached.width) / fullWidth;
+                previewOnly_ = cached.width < fullWidth || cached.height < fullHeight;
+                fullRequested_ = !previewOnly_;
+                lastTiming_.fromCache = true;
+                center_ = D2D1::Point2F(static_cast<float>(imageWidth_) / 2.0f,
+                                        static_cast<float>(imageHeight_) / 2.0f);
+                ApplyInitialView(WindowSize());
+                shownFromCache = true;
+            }
+        }
+    }
+
+    if (!shownFromCache && decoder_) {
+        decoder_->RequestOpen(path_, generation_, MaxTextureEdge(), PreviewEdge());
+    }
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    if (shownFromCache) SchedulePrefetch();
 }
 
 bool Viewer::LoadBlocking(const std::wstring& path) {
@@ -224,7 +259,7 @@ void Viewer::ReopenCurrent() {
     if (path_.empty() || !decoder_) return;
     ++generation_;
     decoder_->Reset(generation_);
-    decoder_->RequestOpen(path_, generation_, MaxTextureEdge());
+    decoder_->RequestOpen(path_, generation_, MaxTextureEdge(), PreviewEdge());
 }
 
 D2D1_SIZE_F Viewer::WindowSize() const { return target_ ? target_->GetSize() : D2D1::SizeF(0, 0); }
@@ -242,6 +277,35 @@ void Viewer::ApplyInitialView(D2D1_SIZE_F size) {
     center_ = D2D1::Point2F(static_cast<float>(imageWidth_) / 2.0f,
                             static_cast<float>(imageHeight_) / 2.0f);
     ClampCenter(size);
+}
+
+UINT Viewer::PreviewEdge() const {
+    const D2D1_SIZE_F size = WindowSize();
+    UINT edge = static_cast<UINT>(std::max(size.width, size.height));
+    if (edge == 0) edge = 1280;
+    return std::clamp<UINT>(edge, 512, 2560);
+}
+
+void Viewer::RequestFullResolution() {
+    if (!decoder_ || path_.empty() || fullRequested_ || !previewOnly_) return;
+    fullRequested_ = true;
+    decoder_->RequestOpen(path_, generation_, MaxTextureEdge(), PreviewEdge());
+}
+
+void Viewer::SchedulePrefetch() {
+    if (prefetchScheduled_ || !decoder_ || folder_.names.size() < 2 || folder_.index < 0) return;
+    prefetchScheduled_ = true;
+
+    const int count = static_cast<int>(folder_.names.size());
+    const UINT edge = PreviewEdge();
+    for (int delta : {1, -1}) {
+        const int index = ((folder_.index + delta) % count + count) % count;
+        if (index == folder_.index) continue;
+        const std::wstring path =
+            JoinPath(folder_.directory, folder_.names[static_cast<size_t>(index)]);
+        if (cache_.Contains(MakeCacheKey(path))) continue;
+        decoder_->RequestPrefetch(path, generation_, edge);
+    }
 }
 
 void Viewer::SetZoom(double zoom) {
@@ -287,6 +351,7 @@ void Viewer::ZoomAt(D2D1_POINT_2F cursor, double factor) {
     center_.y = static_cast<float>(imageY - dy / zoom_);
     fitMode_ = false;
     ClampCenter(size);
+    if (previewOnly_ && zoom_ > cachedScale_ * 1.02) RequestFullResolution();
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
@@ -354,11 +419,22 @@ void Viewer::OnFolderList(FolderList* raw) {
     if (!list) return;
     if (list->generation != folderGeneration_) return;
     folder_ = std::move(*list);
+    prefetchScheduled_ = false;
+    SchedulePrefetch();
 }
 
 void Viewer::OnDecodeResult(DecodeResult* raw) {
     std::unique_ptr<DecodeResult> result(raw);
     if (!result) return;
+
+    // Prefetch results only fill the cache; they never touch what is on screen.
+    if (result->kind == DecodeKind::Prefetch) {
+        if (SUCCEEDED(result->hr) && !result->cachePreview.Empty()) {
+            cache_.Store(MakeCacheKey(result->path), result->cachePreview, result->meta);
+        }
+        return;
+    }
+
     if (result->generation != generation_) return;  // obsolete work
 
     if (result->kind == DecodeKind::Tile) {
@@ -372,7 +448,6 @@ void Viewer::OnDecodeResult(DecodeResult* raw) {
         return;
     }
 
-    lastTiming_.requestMs = openStartMs_;
     lastTiming_.openMs = result->openMs;
     lastTiming_.decodeMs = result->decodeMs;
     lastTiming_.totalMs = result->totalMs;
@@ -380,9 +455,9 @@ void Viewer::OnDecodeResult(DecodeResult* raw) {
     lastTiming_.colorManaged = result->meta.colorManaged;
     lastTiming_.orientation = result->meta.orientation;
 
-    const bool isPreview = result->kind == DecodeKind::Preview;
-    // A full-resolution bitmap replacing a preview must not disturb the view.
-    const bool keepView = result->kind == DecodeKind::Full && previewPending_;
+    // True when a cached (or overview) image is already on screen; the sharper
+    // bitmap then replaces it without disturbing zoom or pan.
+    const bool keepView = hasImage_;
 
     if (lastTiming_.success) {
         meta_ = result->meta;
@@ -396,26 +471,23 @@ void Viewer::OnDecodeResult(DecodeResult* raw) {
             lastTiming_.uploadMs = NowMs() - uploadStart;
             tiled_ = false;
             overviewScale_ = 1.0;
-            previewPending_ = false;
-        } else if (isPreview) {
-            lastTiming_.previewNative = result->nativeScaled;
-            lastTiming_.previewDecodeMs = result->decodeMs;
-            lastTiming_.previewWidth = result->pixels.width;
-            lastTiming_.previewHeight = result->pixels.height;
-            const double uploadStart = NowMs();
-            hasImage_ = CreateBitmap(result->pixels, image_);
-            lastTiming_.uploadMs = NowMs() - uploadStart;
-            tiled_ = false;
-            overviewScale_ = result->overviewPixelsPerImagePixel;
-            previewPending_ = true;
+            previewOnly_ = false;
+            fullRequested_ = true;
+            cachedScale_ = 1.0;
         } else {
             hasImage_ = CreateBitmap(result->pixels, overview_);
             tiled_ = true;
             overviewScale_ = result->overviewPixelsPerImagePixel;
+            previewOnly_ = false;
         }
         lastTiming_.width = imageWidth_;
         lastTiming_.height = imageHeight_;
         lastTiming_.tiled = tiled_;
+
+        // Remember a screen-sized copy so navigating back here is instant.
+        if (!result->cachePreview.Empty()) {
+            cache_.Store(MakeCacheKey(result->path), result->cachePreview, result->meta);
+        }
 
         if (hasImage_ && !keepView) {
             center_ = D2D1::Point2F(static_cast<float>(imageWidth_) / 2.0f,
@@ -424,10 +496,11 @@ void Viewer::OnDecodeResult(DecodeResult* raw) {
         } else if (!hasImage_) {
             lastTiming_.success = false;
         }
-    } else {
+    } else if (!previewOnly_) {
+        // A failed decode leaves the content area black, unless a cached preview
+        // is already showing.
         hasImage_ = false;
         imageWidth_ = imageHeight_ = 0;
-        previewPending_ = false;
     }
 
     // The folder is enumerated only now: the first image is up (or has failed).
@@ -435,11 +508,9 @@ void Viewer::OnDecodeResult(DecodeResult* raw) {
 
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 
-    if (!isPreview) {
-        lastTiming_.hadPreview = previewPending_ || keepView;
-        lastTiming_.readyMs = NowMs();
-        if (imageReadyCallback_) imageReadyCallback_();
-    }
+    lastTiming_.readyMs = NowMs();
+    if (imageReadyCallback_) imageReadyCallback_();
+    SchedulePrefetch();
 }
 
 void Viewer::OnPaint() {
@@ -482,6 +553,8 @@ void Viewer::OnSize(UINT width, UINT height) {
         if (fitMode_) ApplyInitialView(WindowSize());
         else ClampCenter(WindowSize());
     }
+    cache_.Configure(PreviewEdge(), 64ull * 1024 * 1024);
+    if (previewOnly_ && zoom_ > cachedScale_ * 1.02) RequestFullResolution();
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 

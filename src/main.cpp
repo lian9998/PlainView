@@ -24,6 +24,7 @@ namespace {
 
 constexpr UINT_PTR kBenchTimer = 1;
 constexpr UINT kBenchTimeoutMs = 20000;
+constexpr UINT kHideMenuMessage = WM_APP + 3;
 
 struct BenchRow {
     std::wstring file;
@@ -33,11 +34,7 @@ struct BenchRow {
     double totalMs = 0.0;
     double firstFrameMs = 0.0;
     double readyMs = 0.0;
-    bool hadPreview = false;
-    bool previewNative = false;
-    double previewDecodeMs = 0.0;
-    UINT previewWidth = 0;
-    UINT previewHeight = 0;
+    bool fromCache = false;
     double requestMs = 0.0;
     double uploadMs = 0.0;
     SIZE_T peakWorkingSet = 0;
@@ -51,6 +48,8 @@ struct BenchRow {
 struct App {
     HINSTANCE instance = nullptr;
     HWND hwnd = nullptr;
+    HMENU menu = nullptr;       // owned; attached only while Alt is held
+    bool menuVisible = false;
     Viewer viewer;
     AppSettings settings;
 
@@ -147,12 +146,8 @@ void RecordBenchRow(App& app, bool success) {
     row.peakWorkingSet = CurrentPeakWorkingSet();
     row.tiled = timing.tiled;
     row.readyMs = timing.readyMs;
-    row.hadPreview = timing.hadPreview;
-    row.previewNative = timing.previewNative;
-    row.previewDecodeMs = timing.previewDecodeMs;
-    row.previewWidth = timing.previewWidth;
-    row.previewHeight = timing.previewHeight;
     row.requestMs = timing.requestMs;
+    row.fromCache = timing.fromCache;
     row.uploadMs = timing.uploadMs;
     row.colorManaged = timing.colorManaged;
     row.orientation = timing.orientation;
@@ -183,24 +178,15 @@ void FinishBenchReport(App& app) {
             text += L"decode worker   : open+metadata " + FormatDouble(row.openMs) +
                     L" ms, pixel decode " + FormatDouble(row.decodeMs) + L" ms, total " +
                     FormatDouble(row.totalMs) + L" ms\n";
-            if (row.hadPreview) {
-                text += L"preview         : " +
-                        std::to_wstring(row.previewWidth) + L" x " +
-                        std::to_wstring(row.previewHeight) + L", " +
-                        FormatDouble(row.previewDecodeMs) + L" ms decode, " +
-                        FormatDouble(row.uploadMs) + L" ms upload\n";
-                text += L"request issued  : " + FormatDouble(row.requestMs) +
-                        L" ms after process start\n";
+            text += L"request issued  : " + FormatDouble(row.requestMs) +
+                    L" ms after process start\n";
+            if (row.fromCache) {
+                text += L"source          : session cache (no decode)\n";
             }
             text += L"first frame     : " + FormatDouble(row.firstFrameMs) +
-                    L" ms after process start" +
-                    (row.hadPreview
-                         ? (row.previewNative ? L"  (decoder-scaled preview)\n"
-                                              : L"  (preview scaled after full decode)\n")
-                         : L"\n");
-            if (row.hadPreview) {
-                text += L"full detail     : " + FormatDouble(row.readyMs) +
-                        L" ms after process start\n";
+                    L" ms after process start\n";
+            if (row.uploadMs > 0.0) {
+                text += L"texture upload  : " + FormatDouble(row.uploadMs) + L" ms\n";
             }
         } else {
             text += L"result          : failed to decode (content area stays black)\n";
@@ -312,9 +298,35 @@ void ShowRegistrationMessage(HWND owner, bool ok, bool registered, const std::ws
 
     const int answer = MessageBoxW(owner, text.c_str(), L"PlainView", flags);
     if (ok && registered && answer == IDYES) {
-        ShellExecuteW(nullptr, L"open", L"ms-settings:defaultapps", nullptr, nullptr,
-                      SW_SHOWNORMAL);
+        // Windows 11 can open the page for this specific app; fall back otherwise.
+        const HINSTANCE result =
+            ShellExecuteW(nullptr, L"open", L"ms-settings:defaultapps?registeredAppUser=PlainView",
+                          nullptr, nullptr, SW_SHOWNORMAL);
+        if (reinterpret_cast<INT_PTR>(result) <= 32) {
+            ShellExecuteW(nullptr, L"open", L"ms-settings:defaultapps", nullptr, nullptr,
+                          SW_SHOWNORMAL);
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Auto-hiding menu bar: hidden until Alt is pressed, hidden again once closed.
+// ---------------------------------------------------------------------------
+
+void ShowMenuBar(App& app) {
+    if (app.menuVisible || !app.menu || !app.hwnd) return;
+    SetMenu(app.hwnd, app.menu);
+    app.menuVisible = true;
+    DrawMenuBar(app.hwnd);
+    // Hand control to the menu exactly as a plain Alt press would.
+    SendMessageW(app.hwnd, WM_SYSCOMMAND, SC_KEYMENU, 0);
+}
+
+void HideMenuBar(App& app) {
+    if (!app.menuVisible || !app.hwnd) return;
+    SetMenu(app.hwnd, nullptr);
+    app.menuVisible = false;
+    DrawMenuBar(app.hwnd);
 }
 
 // ---------------------------------------------------------------------------
@@ -432,6 +444,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
             return 0;
         }
+        case WM_SYSKEYDOWN:
+            if (app && wParam == VK_MENU) {
+                ShowMenuBar(*app);
+                return 0;
+            }
+            return DefWindowProcW(hwnd, message, wParam, lParam);
+        case WM_MENUSELECT:
+            // The menu system signals "closed" with item 0xFFFF / flags 0xFFFF.
+            if (app && HIWORD(lParam) == 0xFFFF && LOWORD(wParam) == 0xFFFF) {
+                PostMessageW(hwnd, kHideMenuMessage, 0, 0);
+            }
+            return 0;
+        case WM_UNINITMENUPOPUP:
+            if (app) PostMessageW(hwnd, kHideMenuMessage, 0, 0);
+            return 0;
+        case kHideMenuMessage:
+            if (app) HideMenuBar(*app);
+            return 0;
         case WM_TIMER:
             if (app && app->bench && wParam == kBenchTimer) {
                 RecordBenchRow(*app, false);
@@ -443,6 +473,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             DestroyWindow(hwnd);
             return 0;
         case WM_DESTROY:
+            if (app && app->menu) {
+                SetMenu(hwnd, nullptr);
+                DestroyMenu(app->menu);
+                app->menu = nullptr;
+                app->menuVisible = false;
+            }
             PostQuitMessage(0);
             return 0;
         default:
@@ -486,16 +522,17 @@ int RunGui(App& app, int argc, wchar_t** argv) {
     windowClass.lpszClassName = L"PlainViewWindow";
     if (!RegisterClassExW(&windowClass)) return 1;
 
-    HMENU menu = LoadMenuW(app.instance, MAKEINTRESOURCEW(IDR_MAINMENU));
+    app.menu = LoadMenuW(app.instance, MAKEINTRESOURCEW(IDR_MAINMENU));
     HACCEL accelerators = LoadAcceleratorsW(app.instance, MAKEINTRESOURCEW(IDR_ACCEL));
 
     const UINT dpi = GetDpiForSystem();
     RECT rect{0, 0, static_cast<LONG>(1200.0 * dpi / 96.0), static_cast<LONG>(800.0 * dpi / 96.0)};
-    AdjustWindowRectExForDpi(&rect, WS_OVERLAPPEDWINDOW, TRUE, 0, dpi);
+    // The menu bar is not attached at startup, so it must not be reserved here.
+    AdjustWindowRectExForDpi(&rect, WS_OVERLAPPEDWINDOW, FALSE, 0, dpi);
 
     app.hwnd = CreateWindowExW(WS_EX_ACCEPTFILES, windowClass.lpszClassName, L"PlainView",
                                WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                               rect.right - rect.left, rect.bottom - rect.top, nullptr, menu,
+                               rect.right - rect.left, rect.bottom - rect.top, nullptr, nullptr,
                                app.instance, &app);
     if (!app.hwnd) return 1;
 

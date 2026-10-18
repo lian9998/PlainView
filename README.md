@@ -23,12 +23,71 @@ until the first picture is already on screen.
 | Huge images | Images beyond the GPU texture limit use an overview plus on-demand tiles |
 | Background | Black by default, configurable |
 | Settings | `%LOCALAPPDATA%\PlainView\settings.json` |
-| Menu | `Alt` reveals `File → Open / Options / Exit` |
+| Menu | Hidden by default; `Alt` reveals `File → Open / Options / Register / Exit` |
+| Caching | Session-only, screen-resolution, 64 MB budget, neighbours prefetched |
+| Default app | Per-user registration; pick it in Settings → Default apps |
 
 Deliberately absent, per the plan: thumbnail database, persistent image cache,
 prefetching, recents, overlays, toolbar, telemetry, auto-update, logs.
 
-No app-written file exists outside `%LOCALAPPDATA%\PlainView\`.
+No app-written file exists outside `%LOCALAPPDATA%\PlainView\`, and the preview cache
+lives only in RAM (see [Caching](#caching) below).
+
+## Becoming the default viewer
+
+Windows 11 does not let an application make itself the default for a file type — the
+user picks it in Settings. What the app *can* do is register itself as a proper handler
+so it appears in the list:
+
+- **From the app:** `Alt` → `File → Register as Image Viewer…`, then confirm the prompt
+  to open the Default apps page.
+- **From the command line:**
+
+  ```bat
+  PlainView.exe --register      :: HKCU only, no administrator rights
+  PlainView.exe --unregister    :: removes every entry it created
+  ```
+
+Registration writes only under `HKEY_CURRENT_USER`:
+
+```
+HKCU\Software\Classes\PlainView.Image\...                 ProgID, icon, open command
+HKCU\Software\Classes\Applications\PlainView.exe\...     "Open with" entry + SupportedTypes
+HKCU\Software\PlainView\Capabilities\FileAssociations     for Settings → Default apps
+HKCU\Software\RegisteredApplications                       PlainView = the above
+HKCU\Software\Classes\.jpg\OpenWithProgids                (one per supported extension)
+```
+
+Covered extensions: `.jpg .jpeg .jpe .jfif .png .bmp .dib .gif .tif .tiff .ico .webp
+.jxr .wdp`. HEIC/AVIF are deliberately not claimed — they need paid Store codecs, and
+offering PlainView for files it usually cannot decode would be misleading.
+
+To make it the default: **Settings → Apps → Default apps → Choose defaults by file type
+→ `.jpg` → PlainView**, or **Set defaults for applications → PlainView**. Explorer's
+right-click `Open with` will list it immediately after registering (the app also signals
+`SHChangeNotify`, so no logoff is needed).
+
+A plain exe that is merely *browsed to* from "Choose another app" is not a registered
+handler; Windows will not accept it as a default for `.jpg`. That is why registration
+exists.
+
+## Caching
+
+The plan originally forbade caches; the requirement changed to "right arrow then left
+must be immediate, without disk use and without unbounded RAM". What is implemented:
+
+- **In-memory only.** Nothing is ever written to disk.
+- **Screen resolution.** Entries are downscaled to the window's longest edge (capped at
+  2560 px), not full resolution.
+- **Bounded.** 64 MB budget, 32 entries maximum, one entry may take at most a third of
+  the budget; least-recently-used entries are evicted.
+- **Keyed by path + size + last-write time**, so an edited file is never served stale.
+- **Prefetch.** Once an image is on screen and the folder list is ready, the previous and
+  next files are decoded in the background at screen size (lowest priority; cancelled by
+  any navigation).
+- **Full resolution is lazy.** Opening a cached file is instant; the full-resolution
+  decode is only requested when you zoom past what the cached copy can resolve. That
+  keeps both RAM and time-to-pixels low while browsing.
 
 ## Build
 
@@ -68,8 +127,12 @@ Development aids (not needed for normal use):
 :: render the real pipeline offscreen to a PNG (software Direct2D target)
 PlainView.exe --capture out.png image.jpg --size 1600x1000 [--zoom 2.0] [--tile-threshold 1024]
 
-:: measure cold open: decode phases, first frame, full detail, peak working set
+:: measure cold open: decode phases, first frame, peak working set
 PlainView.exe --bench report.txt image1.jpg image2.png
+
+:: file-handler registration
+PlainView.exe --register
+PlainView.exe --unregister
 ```
 
 ## Settings
@@ -100,6 +163,8 @@ Missing or malformed members keep their defaults; an unreadable file is ignored.
 | `src/folder.cpp` | background directory listing, natural sort |
 | `src/settings.cpp` | flat `settings.json` reader/writer |
 | `src/options.cpp` | Options dialog (DPI-scaled by hand) |
+| `src/cache.cpp` | session-only preview cache (LRU, byte budget) |
+| `src/register.cpp` | per-user file-handler registration |
 | `src/app.rc` | menu, accelerators, dialog, manifest |
 | `tests/` | orientation fixtures, classification and browser-benchmark helpers |
 

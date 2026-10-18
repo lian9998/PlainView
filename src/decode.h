@@ -37,15 +37,16 @@ struct PixelBuffer {
 };
 
 enum class DecodeKind {
-    Preview,   // fast, decoder-scaled stand-in shown while the full decode runs
     Full,      // whole image, fits in one GPU texture
     Overview,  // downscaled stand-in for an image too large for one texture
     Tile,      // one detail tile of such an image
+    Prefetch,  // background screen-sized copy for the session cache (not shown)
 };
 
 struct DecodeResult {
     DecodeKind kind = DecodeKind::Full;
     UINT generation = 0;
+    std::wstring path;
 
     // Tile coordinates (only meaningful for DecodeKind::Tile).
     UINT tileX = 0;
@@ -55,6 +56,9 @@ struct DecodeResult {
     HRESULT hr = E_FAIL;
     PixelBuffer pixels;
     ImageMeta meta;
+
+    // Screen-sized copy of the image for the session cache (may be empty).
+    PixelBuffer cachePreview;
 
     // For Overview: overview pixels per source pixel.
     double overviewPixelsPerImagePixel = 1.0;
@@ -67,6 +71,9 @@ struct DecodeResult {
 };
 
 HRESULT CreateWicFactory(IWICImagingFactory** factory);
+
+// Box-filter downscale into a new buffer (used for cache previews).
+void DownscaleToFit(const PixelBuffer& source, UINT maxEdge, PixelBuffer& out);
 
 // Synchronous decode helper for offscreen capture and tests: decodes on the
 // calling thread and keeps the decoder open so tiles can be produced on demand.
@@ -105,25 +112,35 @@ public:
     void Reset(UINT generation);
 
     // Decodes the whole image when it fits in `maxTextureEdge`, otherwise only an
-    // overview (the UI then asks for tiles).
-    void RequestOpen(const std::wstring& path, UINT generation, UINT maxTextureEdge);
+    // overview (the UI then asks for tiles). `cacheEdge` is the longest edge of the
+    // screen-sized copy handed back for the preview cache.
+    void RequestOpen(const std::wstring& path, UINT generation, UINT maxTextureEdge,
+                     UINT cacheEdge);
     void RequestTile(const std::wstring& path, UINT generation, UINT tileX, UINT tileY,
                      UINT tileSize);
 
+    // Background, lowest priority: decodes a screen-sized copy of another file so
+    // that navigating to it later needs no disk work.
+    void RequestPrefetch(const std::wstring& path, UINT generation, UINT maxEdge);
+
 private:
     struct Job {
-        enum class Type { Open, Tile } type = Type::Open;
+        enum class Type { Open, Tile, Prefetch } type = Type::Open;
         std::wstring path;
         UINT generation = 0;
         UINT maxTextureEdge = 0;
         UINT tileX = 0;
         UINT tileY = 0;
         UINT tileSize = 0;
+        UINT cacheEdge = 0;
+        UINT maxEdge = 0;
     };
 
     void ThreadMain();
     void HandleOpen(const Job& job);
     void HandleTile(const Job& job);
+    void HandlePrefetch(const Job& job);
+    void DropQueuedPrefetches();
     bool IsCancelled(UINT generation) const;
     void PostResult(DecodeResult&& result);
 

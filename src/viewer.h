@@ -6,6 +6,7 @@
 #pragma once
 
 #include "common.h"
+#include "cache.h"
 #include "decode.h"
 #include "folder.h"
 #include "settings.h"
@@ -69,13 +70,9 @@ public:
         double totalMs = 0.0;
         double firstFrameMs = 0.0;  // process-relative time of the first painted frame
         double readyMs = 0.0;       // process-relative time the final bitmap was applied
-        bool hadPreview = false;
-        bool previewNative = false;
-        double previewDecodeMs = 0.0;  // worker time to build the preview
-        UINT previewWidth = 0;
-        UINT previewHeight = 0;
-        double requestMs = 0.0;        // process-relative time the open was requested
-        double uploadMs = 0.0;         // CreateBitmap() time on the UI thread
+        double requestMs = 0.0;     // process-relative time the open was requested
+        double uploadMs = 0.0;      // CreateBitmap() time on the UI thread
+        bool fromCache = false;     // shown instantly from the session cache
         bool success = false;
         UINT width = 0;
         UINT height = 0;
@@ -98,6 +95,9 @@ private:
     void EnsureFolderScan();
     void EnsureTile(UINT tileX, UINT tileY, D2D1_SIZE_F size);
     void DrawImage(ID2D1RenderTarget* target, D2D1_SIZE_F size);
+    UINT PreviewEdge() const;
+    void RequestFullResolution();
+    void SchedulePrefetch();
     void DrawTiled(ID2D1RenderTarget* target, D2D1_SIZE_F size);
     UINT MaxTextureEdge() const;
     D2D1_SIZE_F WindowSize() const;
@@ -124,7 +124,13 @@ private:
     UINT imageHeight_ = 0;
     bool hasImage_ = false;
     bool tiled_ = false;
-    bool previewPending_ = false;
+    // Showing a screen-resolution copy from the session cache; full resolution is
+    // decoded lazily, when the user zooms past what the cached copy can show.
+    bool previewOnly_ = false;
+    double cachedScale_ = 1.0;
+    bool fullRequested_ = false;
+    bool prefetchScheduled_ = false;
+    PreviewCache cache_;
     double overviewScale_ = 1.0;
 
     ComPtr<ID2D1Bitmap> image_;

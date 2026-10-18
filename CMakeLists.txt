@@ -3,6 +3,7 @@ project(PlainView LANGUAGES CXX RC)
 
 # One executable, no third-party dependencies: Win32 + WIC + Direct2D.
 add_executable(PlainView WIN32
+    src/cache.cpp
     src/common.cpp
     src/decode.cpp
     src/folder.cpp

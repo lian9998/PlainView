@@ -9,13 +9,6 @@
 
 namespace {
 
-// Images above this many pixels get a decoder-scaled preview while the full decode
-// runs. Measured on a 7008x4672 JPEG: WIC's scaled decode cost the same as the full
-// decode (622 ms vs 624 ms), so a preview only buys "image on screen" for images
-// whose full decode is genuinely slow. It is therefore reserved for very large
-// pictures instead of being applied to every photo.
-constexpr UINT64 kPreviewPixelThreshold = 64000000;
-
 // EXIF orientations, verified empirically with tests/data/orientation{1..8}.jpg:
 // WIC applies the flip first and the rotation afterwards, which is why 5 and 7
 // look "swapped" compared with the naive rotate-then-flip derivation.
@@ -377,6 +370,57 @@ HRESULT WicSession::DecodeRect(UINT x, UINT y, UINT w, UINT h, const Cancel& can
     return hr;
 }
 
+void DownscaleToFit(const PixelBuffer& source, UINT maxEdge, PixelBuffer& out) {
+    out.Reset();
+    if (source.Empty() || maxEdge == 0) return;
+
+    const UINT longest = std::max(source.width, source.height);
+    if (longest <= maxEdge) {
+        out = source;
+        return;
+    }
+
+    const double scale = static_cast<double>(maxEdge) / longest;
+    const UINT width = std::max<UINT>(1, static_cast<UINT>(source.width * scale + 0.5));
+    const UINT height = std::max<UINT>(1, static_cast<UINT>(source.height * scale + 0.5));
+
+    out.width = width;
+    out.height = height;
+    out.pixels.resize(static_cast<size_t>(width) * height * 4);
+
+    const size_t sourceStride = source.Stride();
+    for (UINT y = 0; y < height; ++y) {
+        const UINT y0 = static_cast<UINT>(static_cast<UINT64>(y) * source.height / height);
+        const UINT y1 = std::max<UINT>(y0 + 1,
+                                       static_cast<UINT>(static_cast<UINT64>(y + 1) *
+                                                         source.height / height));
+        for (UINT x = 0; x < width; ++x) {
+            const UINT x0 = static_cast<UINT>(static_cast<UINT64>(x) * source.width / width);
+            const UINT x1 = std::max<UINT>(x0 + 1,
+                                           static_cast<UINT>(static_cast<UINT64>(x + 1) *
+                                                             source.width / width));
+            UINT64 b = 0, g = 0, r = 0, a = 0;
+            UINT count = 0;
+            for (UINT sy = y0; sy < y1; ++sy) {
+                const BYTE* row = source.pixels.data() + static_cast<size_t>(sy) * sourceStride;
+                for (UINT sx = x0; sx < x1; ++sx) {
+                    const BYTE* pixel = row + static_cast<size_t>(sx) * 4;
+                    b += pixel[0];
+                    g += pixel[1];
+                    r += pixel[2];
+                    a += pixel[3];
+                    ++count;
+                }
+            }
+            BYTE* dest = out.pixels.data() + (static_cast<size_t>(y) * width + x) * 4;
+            dest[0] = static_cast<BYTE>(b / count);
+            dest[1] = static_cast<BYTE>(g / count);
+            dest[2] = static_cast<BYTE>(r / count);
+            dest[3] = static_cast<BYTE>(a / count);
+        }
+    }
+}
+
 HRESULT CreateWicFactory(IWICImagingFactory** factory) {
     return CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                             IID_PPV_ARGS(factory));
@@ -412,18 +456,41 @@ void Decoder::Reset(UINT generation) {
     cv_.notify_all();
 }
 
-void Decoder::RequestOpen(const std::wstring& path, UINT generation, UINT maxTextureEdge) {
+void Decoder::RequestOpen(const std::wstring& path, UINT generation, UINT maxTextureEdge,
+                          UINT cacheEdge) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        DropQueuedPrefetches();
         while (queue_.size() >= 4) queue_.pop_front();
         Job job;
         job.type = Job::Type::Open;
         job.path = path;
         job.generation = generation;
         job.maxTextureEdge = maxTextureEdge;
+        job.cacheEdge = cacheEdge;
         queue_.push_back(std::move(job));
     }
     cv_.notify_one();
+}
+
+void Decoder::RequestPrefetch(const std::wstring& path, UINT generation, UINT maxEdge) {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (queue_.size() >= 16) return;
+        Job job;
+        job.type = Job::Type::Prefetch;
+        job.path = path;
+        job.generation = generation;
+        job.maxEdge = maxEdge;
+        queue_.push_back(std::move(job));
+    }
+    cv_.notify_one();
+}
+
+void Decoder::DropQueuedPrefetches() {
+    queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
+                                [](const Job& job) { return job.type == Job::Type::Prefetch; }),
+                 queue_.end());
 }
 
 void Decoder::RequestTile(const std::wstring& path, UINT generation, UINT tileX, UINT tileY,
@@ -462,7 +529,8 @@ void Decoder::ThreadMain() {
         if (IsCancelled(job.generation)) continue;
 
         if (job.type == Job::Type::Open) HandleOpen(job);
-        else HandleTile(job);
+        else if (job.type == Job::Type::Tile) HandleTile(job);
+        else HandlePrefetch(job);
     }
 
     session_.reset();
@@ -487,6 +555,7 @@ void Decoder::HandleOpen(const Job& job) {
 
     DecodeResult result;
     result.generation = generation;
+    result.path = job.path;
     result.kind = DecodeKind::Full;
 
     const double openStart = NowMs();
@@ -498,10 +567,6 @@ void Decoder::HandleOpen(const Job& job) {
         result.meta = session_->Meta();
         const UINT longest = std::max(result.meta.srcWidth, result.meta.srcHeight);
         const UINT edge = job.maxTextureEdge ? job.maxTextureEdge : 16384;
-        const bool swapped = result.meta.orientation >= 5 && result.meta.orientation <= 8;
-        const UINT orientedW = swapped ? result.meta.srcHeight : result.meta.srcWidth;
-        const UINT orientedH = swapped ? result.meta.srcWidth : result.meta.srcHeight;
-        const UINT64 pixelCount = static_cast<UINT64>(orientedW) * orientedH;
 
         if (longest > edge) {
             // Too large for one GPU texture: publish a light overview, then tiles.
@@ -511,32 +576,15 @@ void Decoder::HandleOpen(const Job& job) {
             result.hr = session_->DecodeOverview(overviewEdge, cancel, result.pixels,
                                                  &result.overviewPixelsPerImagePixel);
             result.decodeMs = NowMs() - decodeStart;
-        } else if (pixelCount > kPreviewPixelThreshold) {
-            // Show a decoder-scaled preview first, then the full-resolution bitmap.
-            DecodeResult preview = result;
-            preview.kind = DecodeKind::Preview;
-            preview.nativeScaled = false;
-            const double previewStart = NowMs();
-            preview.hr = session_->DecodeOverview(std::min<UINT>(2048, edge), cancel,
-                                                  preview.pixels,
-                                                  &preview.overviewPixelsPerImagePixel);
-            preview.decodeMs = NowMs() - previewStart;
-            preview.totalMs = NowMs() - start;
-            preview.nativeScaled = session_->LastOverviewWasNative();
-            if (IsCancelled(generation)) return;
-            if (SUCCEEDED(preview.hr)) {
-                PostResult(std::move(preview));
-            }
-
-            const double decodeStart = NowMs();
-            result.hr = session_->DecodeFull(cancel, result.pixels, &result.decodeMs);
-            result.decodeMs = NowMs() - decodeStart;
-            if (IsCancelled(generation)) return;
-            if (FAILED(result.hr)) return;  // keep the preview that is already shown
         } else {
             const double decodeStart = NowMs();
             result.hr = session_->DecodeFull(cancel, result.pixels, &result.decodeMs);
             result.decodeMs = NowMs() - decodeStart;
+        }
+
+        // Screen-sized copy for the session cache.
+        if (SUCCEEDED(result.hr) && job.cacheEdge > 0 && !result.pixels.Empty()) {
+            DownscaleToFit(result.pixels, job.cacheEdge, result.cachePreview);
         }
     }
 
@@ -544,8 +592,34 @@ void Decoder::HandleOpen(const Job& job) {
     result.totalMs = NowMs() - start;
     if (FAILED(result.hr)) {
         result.pixels.Reset();
+        result.cachePreview.Reset();
         result.kind = DecodeKind::Full;
     }
+    PostResult(std::move(result));
+}
+
+void Decoder::HandlePrefetch(const Job& job) {
+    if (IsCancelled(job.generation)) return;
+
+    const double start = NowMs();
+    WicSession session;
+    Cancel cancel{[this, generation = job.generation] { return IsCancelled(generation); }};
+
+    DecodeResult result;
+    result.generation = job.generation;
+    result.path = job.path;
+    result.kind = DecodeKind::Prefetch;
+
+    result.hr = session.Open(job.path, cancel);
+    if (SUCCEEDED(result.hr)) {
+        result.meta = session.Meta();
+        PixelBuffer scaled;
+        double ignored = 1.0;
+        result.hr = session.DecodeOverview(job.maxEdge, cancel, scaled, &ignored);
+        if (SUCCEEDED(result.hr)) result.cachePreview = std::move(scaled);
+    }
+    result.totalMs = NowMs() - start;
+    if (IsCancelled(job.generation) || FAILED(result.hr)) return;
     PostResult(std::move(result));
 }
 

@@ -91,6 +91,23 @@ Caveats: the browser ran on the Linux side of WSL2 with software rasterisation, 
 numbers are indicative rather than a controlled comparison. Re-run the script on the
 Windows side (Edge, `--remote-debugging-port`) for a same-OS baseline.
 
+## Session cache and prefetch
+
+The cache added after these measurements changes the picture for repeated visits:
+
+- First open of a file: unchanged (one full decode, ~624 ms for the 33 MP test image)
+  plus a box-filter downscale (~40 ms) to fill the cache.
+- Returning to a file already in the cache: no decode at all — the bitmap is uploaded
+  from the cached pixels (a few ms for ~4 MB).
+- Prefetch of the previous/next file runs on the decode worker after the current image
+  is displayed; it is dropped as soon as the user navigates.
+- Full resolution is deferred until the zoom level exceeds what the cached copy can show,
+  so arrow-key browsing never pays for a 131 MB texture.
+
+Memory: up to 64 MB of cache plus the current image's texture (and, when zoomed in, its
+full-resolution bitmap). These figures are design targets; they were not re-measured
+because of the Smart App Control block.
+
 ## Still to measure
 
 These need a build that can be executed (see the Smart App Control note in the README):

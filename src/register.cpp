@@ -1,6 +1,8 @@
 // register.cpp
 #include "register.h"
 
+#include <shlobj.h>
+
 #include <algorithm>
 #include <string>
 
@@ -188,6 +190,8 @@ bool RegisterImageHandler(std::wstring* error) {
         return fail(L"Registered applications");
     }
 
+    // Make Explorer pick the new handler up without a logoff.
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
     return true;
 }
 
@@ -214,6 +218,7 @@ bool UnregisterImageHandler(std::wstring* error) {
     }
 
     if (!ok && error) *error = L"Some registration entries could not be removed.";
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
     return ok;
 }
 

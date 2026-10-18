@@ -29,7 +29,7 @@ echo [2/2] compiling and linking
 cl /nologo /std:c++20 /EHsc /W4 /WX /permissive- /utf-8 ^
    /DUNICODE /D_UNICODE !CFLAGS! ^
    /Fo%OUTDIR%\ /Fd%OUTDIR%\ ^
-   src\common.cpp src\decode.cpp src\folder.cpp src\register.cpp src\settings.cpp ^
+   src\cache.cpp src\common.cpp src\decode.cpp src\folder.cpp src\register.cpp src\settings.cpp ^
    src\viewer.cpp src\options.cpp src\main.cpp ^
    /Fe%OUTDIR%\PlainView.exe ^
    /link %OUTDIR%\app.res /SUBSYSTEM:WINDOWS ^
