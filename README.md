@@ -24,7 +24,7 @@ until the first picture is already on screen.
 | Background | Black by default; RGBA picker (native colour dialog + alpha slider) |
 | Non-images | The file's Explorer icon at 1/10 of the window width instead of a blank window |
 | Settings | `%LOCALAPPDATA%\PlainView\settings.json` |
-| Menu | Hidden by default; `Alt` reveals `File → Open / Options / Background Color / Register / Exit` |
+| Menu | Hidden by default; `Alt` reveals it (native menu activation), `Alt`/`Esc` hides it again |
 | Caching | Session-only, screen-resolution, unlimited by default, neighbours prefetched while idle |
 | Default app | Per-user registration; pick it in Settings → Default apps |
 

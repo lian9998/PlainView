@@ -327,11 +327,12 @@ void ShowRegistrationMessage(HWND owner, bool ok, bool registered, const std::ws
 
 void ShowMenuBar(App& app) {
     if (app.menuVisible || !app.menu || !app.hwnd) return;
+    // Attach the bar and let DefWindowProc perform its normal Alt activation. Do
+    // not synthesize SC_KEYMENU: with lParam 0 that opens the *system* menu, which
+    // made the bar appear and vanish again.
     SetMenu(app.hwnd, app.menu);
     app.menuVisible = true;
     DrawMenuBar(app.hwnd);
-    // Hand control to the menu exactly as a plain Alt press would.
-    SendMessageW(app.hwnd, WM_SYSCOMMAND, SC_KEYMENU, 0);
 }
 
 void HideMenuBar(App& app) {
@@ -459,10 +460,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
             }
             return 0;
         }
+        case WM_ACTIVATE:
+            if (app && LOWORD(wParam) == WA_INACTIVE) {
+                PostMessageW(hwnd, kHideMenuMessage, 0, 0);
+            }
+            return 0;
         case WM_SYSKEYDOWN:
             if (app && wParam == VK_MENU) {
-                ShowMenuBar(*app);
-                return 0;
+                const bool autoRepeat = (lParam & (1 << 30)) != 0;
+                if (!autoRepeat) {
+                    if (!app->menuVisible) {
+                        // Reveal the bar; the default handler below activates it the
+                        // same way a normal window menu is activated.
+                        ShowMenuBar(*app);
+                    } else {
+                        // Visible and no menu loop is running (a running menu would
+                        // have consumed this key): this Alt hides the bar again.
+                        HideMenuBar(*app);
+                        return 0;
+                    }
+                }
             }
             return DefWindowProcW(hwnd, message, wParam, lParam);
         case WM_MENUSELECT:
