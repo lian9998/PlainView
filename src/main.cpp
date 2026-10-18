@@ -10,6 +10,7 @@
 
 #include <d2d1.h>
 #include <d2d1helper.h>
+#include <commctrl.h>
 #include <psapi.h>
 #include <shellapi.h>
 #include <shobjidl.h>
@@ -615,6 +616,10 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE))) {
         return 1;
     }
+
+    // The Options dialog uses a trackbar; its window class lives in comctl32.
+    INITCOMMONCONTROLSEX commonControls{sizeof(commonControls), ICC_BAR_CLASSES};
+    InitCommonControlsEx(&commonControls);
 
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
