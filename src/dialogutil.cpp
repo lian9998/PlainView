@@ -4,9 +4,14 @@
 #include <windowsx.h>
 
 void ScaleDialogToDpi(HWND dialog, HFONT* font) {
-    const UINT dpi = GetDpiForWindow(dialog);
-    if (dpi == 0 || dpi == 96) return;
-    const double scale = dpi / 96.0;
+    // The dialog manager lays a template out at the *system* DPI, so the only
+    // scaling still to do is the difference between the system DPI and the monitor
+    // the dialog was opened on. Comparing against 96 dpi would scale twice on a
+    // high-dpi system (a 200% machine produced a 400% dialog).
+    const UINT monitorDpi = GetDpiForWindow(dialog);
+    const UINT systemDpi = GetDpiForSystem();
+    if (monitorDpi == 0 || systemDpi == 0 || monitorDpi == systemDpi) return;
+    const double scale = static_cast<double>(monitorDpi) / systemDpi;
 
     RECT dialogRect{};
     GetWindowRect(dialog, &dialogRect);

@@ -3,8 +3,8 @@
 
 #include "common.h"
 
-// The dialog templates are authored at 96 DPI. Per-monitor v2 processes are not
-// scaled automatically, so dialogs scale themselves once on open.
+// The dialog manager creates a template at the system DPI. When the dialog opens on
+// a monitor with a different DPI, this rescales it (and its font) by that ratio.
 // The created font is returned in `font` and must be deleted by the caller.
 void ScaleDialogToDpi(HWND dialog, HFONT* font);
 
