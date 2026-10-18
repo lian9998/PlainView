@@ -1,6 +1,7 @@
 // settings.cpp — a deliberately small, dependency-free reader/writer for the flat
-// settings.json object: { "zoomStep": 1.15, "backgroundColor": "#000000",
-// "initialSizing": "fit" }.
+// settings.json object (zoomStep, cacheBudgetMB, prefetchDepth, backgroundColor,
+// initialSizing). Every member the reader understands is also written, so a value
+// survives a restart.
 #include "settings.h"
 
 #include <algorithm>
@@ -160,7 +161,7 @@ bool LoadSettings(AppSettings& out) {
         if (ParseString(raw, text) && ParseColor(text, color)) out.background = color;
     }
     if (FindMember(json, "cacheBudgetMB", raw)) {
-        if (ParseNumber(raw, number) && number >= 0.0 && number <= 65536.0) {
+        if (ParseNumber(raw, number) && number >= 0.0 && number <= kCacheBudgetMaxMB) {
             out.cacheBudgetMB = static_cast<int>(number);
         }
     }
@@ -194,6 +195,10 @@ bool SaveSettings(const AppSettings& settings) {
     std::string text = "{\n";
     text += "  \"zoomStep\": ";
     text += number;
+    text += ",\n  \"cacheBudgetMB\": ";
+    text += std::to_string(settings.cacheBudgetMB);
+    text += ",\n  \"prefetchDepth\": ";
+    text += std::to_string(settings.prefetchDepth);
     text += ",\n  \"backgroundColor\": \"";
     text += FormatColor(settings.background);
     text += "\",\n  \"initialSizing\": \"";

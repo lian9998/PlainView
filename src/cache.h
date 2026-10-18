@@ -16,6 +16,10 @@
 // Path plus size plus last-write time, so an edited file is never served stale.
 std::wstring MakeCacheKey(const std::wstring& path);
 
+// Longest edge of a cached preview for a window of this size: the window's longest
+// edge, kept between 512 and 4096 pixels. Screen resolution, in other words.
+UINT PreviewEdgeForWindow(UINT width, UINT height);
+
 class PreviewCache {
 public:
     void Configure(UINT maxEdge, size_t budgetBytes);
@@ -44,6 +48,6 @@ private:
     std::list<Entry> items_;  // front = most recently used
     std::unordered_map<std::wstring, std::list<Entry>::iterator> index_;
     size_t bytes_ = 0;
-    size_t budget_ = 64ull * 1024 * 1024;
+    size_t budget_ = 256ull * 1024 * 1024;
     UINT maxEdge_ = 2048;
 };

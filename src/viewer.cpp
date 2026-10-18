@@ -51,8 +51,8 @@ bool Viewer::InitGraphics(HWND hwnd) {
                                 static_cast<UINT>(rc.bottom - rc.top)))) {
         return false;
     }
-    // Session cache: screen-sized entries, never on disk. The budget defaults to
-    // "unlimited" (rely on the OS) and is settable in settings.json.
+    // Session cache: screen-sized entries, never on disk. Bounded by default
+    // (256 MB); "unlimited" is an explicit opt-in.
     cache_.Configure(PreviewEdge(), CacheBudgetBytes());
     // If the image arrived while the device was still being created, make sure it
     // fits this device's texture limit.
@@ -295,15 +295,15 @@ void Viewer::ApplyInitialView(D2D1_SIZE_F size) {
 
 UINT Viewer::PreviewEdge() const {
     const D2D1_SIZE_F size = WindowSize();
-    UINT edge = static_cast<UINT>(std::max(size.width, size.height));
-    if (edge == 0) edge = 1280;
-    // One cached image never exceeds screen resolution (4K displays included).
-    return std::clamp<UINT>(edge, 512, 4096);
+    return PreviewEdgeForWindow(static_cast<UINT>(std::max(0.0f, size.width)),
+                                static_cast<UINT>(std::max(0.0f, size.height)));
 }
 
 size_t Viewer::CacheBudgetBytes() const {
-    if (settings_.cacheBudgetMB <= 0) return PreviewCache::kUnlimited;
-    return static_cast<size_t>(settings_.cacheBudgetMB) * 1024 * 1024;
+    if (settings_.cacheBudgetMB == kCacheBudgetUnlimitedMB) return PreviewCache::kUnlimited;
+    const int megabytes =
+        std::clamp(settings_.cacheBudgetMB, kCacheBudgetMinMB, kCacheBudgetMaxMB);
+    return static_cast<size_t>(megabytes) * 1024 * 1024;
 }
 
 void Viewer::ArmPrefetchTimer() {

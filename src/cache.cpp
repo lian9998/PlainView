@@ -5,7 +5,15 @@
 #include <cstdio>
 
 namespace {
-constexpr size_t kMaxEntries = 32;
+// A safety valve only: the byte budget is what bounds the cache in practice.
+constexpr size_t kMaxEntries = 1024;
+}
+
+UINT PreviewEdgeForWindow(UINT width, UINT height) {
+    UINT edge = std::max(width, height);
+    if (edge == 0) edge = 1280;
+    // One cached image never exceeds screen resolution (4K displays included).
+    return std::clamp<UINT>(edge, 512, 4096);
 }
 
 std::wstring MakeCacheKey(const std::wstring& path) {
@@ -43,8 +51,9 @@ bool PreviewCache::Lookup(const std::wstring& key, PixelBuffer& pixels, ImageMet
 void PreviewCache::Store(const std::wstring& key, const PixelBuffer& pixels, const ImageMeta& meta) {
     if (pixels.Empty()) return;
     const size_t incoming = pixels.pixels.size();
-    // With a finite budget, one entry may never take more than a third of it.
-    if (!Unlimited() && incoming > budget_ / 3) return;
+    // A finite budget must be able to hold the entry at all. Entries are already
+    // capped at screen size, so one of them is a reasonable thing to keep.
+    if (!Unlimited() && incoming > budget_) return;
 
     const auto found = index_.find(key);
     if (found != index_.end()) {
