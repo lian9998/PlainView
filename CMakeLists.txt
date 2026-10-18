@@ -36,7 +36,6 @@ target_link_libraries(PlainView PRIVATE
     d2d1
     windowscodecs
     comdlg32
-    comctl32
     psapi
     uuid
     advapi32

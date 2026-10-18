@@ -24,13 +24,6 @@ D2D1_BITMAP_INTERPOLATION_MODE InterpolationFor(double scale) {
 
 bool OrientationSwapsAxes(UINT orientation) { return orientation >= 5 && orientation <= 8; }
 
-// The window has no backdrop of its own, so a translucent background colour is
-// composited over black. Alpha therefore dims the colour, exactly as the picker's
-// preview shows.
-D2D1_COLOR_F CompositeOverBlack(const D2D1_COLOR_F& color) {
-    const float alpha = std::clamp(color.a, 0.0f, 1.0f);
-    return D2D1::ColorF(color.r * alpha, color.g * alpha, color.b * alpha, 1.0f);
-}
 
 }  // namespace
 
@@ -92,12 +85,12 @@ void Viewer::Shutdown() {
 
 void Viewer::SetSettings(const AppSettings& settings) {
     settings_ = settings;
-    background_ = CompositeOverBlack(settings.background);
+    background_ = settings.background;
     if (target_) cache_.Configure(PreviewEdge(), CacheBudgetBytes());
 }
 
 void Viewer::RefreshBackground() {
-    background_ = CompositeOverBlack(settings_.background);
+    background_ = settings_.background;
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 

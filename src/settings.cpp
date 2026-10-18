@@ -99,13 +99,13 @@ bool ParseColor(const std::string& text, D2D1_COLOR_F& out) {
         return true;
     };
 
-    unsigned a = 255, r = 0, g = 0, b = 0;
-    const bool hasAlpha = text.size() == 9;
-    if (hasAlpha && !byteAt(1, a)) return false;
-    const size_t base = hasAlpha ? 3 : 1;
+    unsigned r = 0, g = 0, b = 0;
+    // An old #AARRGGBB value is still accepted, but the alpha byte is ignored:
+    // backgrounds are opaque.
+    const size_t base = text.size() == 9 ? 3 : 1;
     if (!byteAt(base, r) || !byteAt(base + 2, g) || !byteAt(base + 4, b)) return false;
 
-    out = D2D1::ColorF(r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f);
+    out = D2D1::ColorF(r / 255.0f, g / 255.0f, b / 255.0f, 1.0f);
     return true;
 }
 
@@ -114,13 +114,8 @@ std::string FormatColor(const D2D1_COLOR_F& color) {
         return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
     };
     char buffer[16];
-    if (channel(color.a) < 255) {
-        std::snprintf(buffer, sizeof(buffer), "#%02X%02X%02X%02X", channel(color.a),
-                      channel(color.r), channel(color.g), channel(color.b));
-    } else {
-        std::snprintf(buffer, sizeof(buffer), "#%02X%02X%02X", channel(color.r), channel(color.g),
-                      channel(color.b));
-    }
+    std::snprintf(buffer, sizeof(buffer), "#%02X%02X%02X", channel(color.r), channel(color.g),
+                  channel(color.b));
     return buffer;
 }
 

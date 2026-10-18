@@ -110,14 +110,12 @@ settings.json caps it if that is not wanted. The current image's texture, plus i
 full-resolution bitmap when zoomed in, come on top. These figures are design targets;
 they were not re-measured because of the Smart App Control block.
 
-## Background alpha
+## Background colour
 
-The Windows colour dialog returns a 24-bit `COLORREF`, so alpha cannot come from it. The
-flow is: native picker for RGB, then a small popup with an alpha slider and a preview.
-Because the Direct2D window has no backdrop, the alpha byte is composited over black —
-`effective = rgb × alpha` — which makes the slider behave as a dimmer. Supporting a
-genuinely see-through window would require a layered window, which Direct2D's HWND
-render target does not provide directly.
+Opaque only, by decision: the background is a plain RGB colour chosen through the native
+Windows dialog. An earlier alpha slider was removed — the window has no backdrop of its
+own, so an alpha byte could only be composited over black, and a genuinely see-through
+background would require a layered or DirectComposition window.
 
 ## Still to measure
 

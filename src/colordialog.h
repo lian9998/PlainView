@@ -1,4 +1,4 @@
-// colordialog.h — RGBA background picker (the common colour dialog has no alpha).
+// colordialog.h — background colour picker (opaque RGB only).
 #pragma once
 
 #include "common.h"

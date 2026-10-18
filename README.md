@@ -21,7 +21,7 @@ until the first picture is already on screen.
 | EXIF | All eight orientation values applied during decode |
 | Colour | Embedded ICC profiles transformed to sRGB |
 | Huge images | Images beyond the GPU texture limit use an overview plus on-demand tiles |
-| Background | Black by default; RGBA picker (native colour dialog + alpha slider) |
+| Background | Black by default; native Windows colour picker (opaque) |
 | Non-images | The file's Explorer icon at 1/10 of the window width instead of a blank window |
 | Settings | `%LOCALAPPDATA%\PlainView\settings.json` |
 | Menu | Hidden by default; `Alt` reveals it (native menu activation), `Alt`/`Esc` hides it again |
@@ -162,10 +162,9 @@ PlainView.exe --unregister
 
 - `zoomStep` — wheel multiplier, 1.01–3.00.
 - `cacheBudgetMB` — session cache limit in MB; `0` (default) means unlimited.
-- `backgroundColor` — `#RRGGBB` or `#AARRGGBB`. The alpha byte is composited over
-  black (the window has no backdrop of its own), so it acts as a dimmer and the picker's
-  preview shows the result. `File → Background Color…` opens the native colour dialog
-  for RGB followed by a small popup with the alpha slider.
+- `backgroundColor` — `#RRGGBB`, opaque. An old `#AARRGGBB` value is still read, but its
+  alpha byte is ignored. `File → Background Color…` opens the native Windows colour
+  dialog.
 - `initialSizing` — `fit` or `actual` (100 %).
 
 Missing or malformed members keep their defaults; an unreadable file is ignored.

@@ -34,12 +34,7 @@ std::wstring FormatColorHex(const D2D1_COLOR_F& color) {
         return static_cast<int>(std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
     };
     wchar_t buffer[16];
-    if (channel(color.a) < 255) {
-        swprintf_s(buffer, L"#%02X%02X%02X%02X", channel(color.a), channel(color.r),
-                   channel(color.g), channel(color.b));
-    } else {
-        swprintf_s(buffer, L"#%02X%02X%02X", channel(color.r), channel(color.g), channel(color.b));
-    }
+    swprintf_s(buffer, L"#%02X%02X%02X", channel(color.r), channel(color.g), channel(color.b));
     return buffer;
 }
 

@@ -10,7 +10,6 @@
 
 #include <d2d1.h>
 #include <d2d1helper.h>
-#include <commctrl.h>
 #include <psapi.h>
 #include <shellapi.h>
 #include <shobjidl.h>
@@ -616,10 +615,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int) {
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE))) {
         return 1;
     }
-
-    INITCOMMONCONTROLSEX commonControls{sizeof(commonControls),
-                                        ICC_BAR_CLASSES | ICC_STANDARD_CLASSES};
-    InitCommonControlsEx(&commonControls);
 
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
