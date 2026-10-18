@@ -4,8 +4,11 @@
 #include <propidl.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
+#include <string>
+#include <vector>
 
 namespace {
 
@@ -46,8 +49,64 @@ UINT ReadExifOrientation(IWICBitmapFrameDecode* frame) {
     return 1;
 }
 
+DWORD ReadBigEndian32(const BYTE* bytes) {
+    return (static_cast<DWORD>(bytes[0]) << 24) | (static_cast<DWORD>(bytes[1]) << 16) |
+           (static_cast<DWORD>(bytes[2]) << 8) | static_cast<DWORD>(bytes[3]);
+}
+
+// Reads the ICC 'desc' tag (v2 'desc' or v4 'mluc') and looks for "sRGB". Other
+// profiles - Adobe RGB, Display P3, camera-specific - still get the transform; a
+// profile without a readable description is treated conservatively.
+bool IsSrgbProfile(IWICColorContext* context) {
+    UINT size = 0;
+    if (FAILED(context->GetProfileBytes(0, nullptr, &size)) || size < 132) return false;
+    std::vector<BYTE> profile(size);
+    if (FAILED(context->GetProfileBytes(size, profile.data(), &size)) || size < 132) return false;
+    if (std::memcmp(profile.data() + 16, "RGB ", 4) != 0) return false;
+
+    const DWORD tagCount = ReadBigEndian32(profile.data() + 128);
+    for (DWORD i = 0; i < tagCount; ++i) {
+        const size_t entry = 132 + static_cast<size_t>(i) * 12;
+        if (entry + 12 > size) break;
+        if (std::memcmp(profile.data() + entry, "desc", 4) != 0) continue;
+
+        const DWORD offset = ReadBigEndian32(profile.data() + entry + 4);
+        const DWORD length = ReadBigEndian32(profile.data() + entry + 8);
+        if (offset > size || length > size - offset || length < 12) return false;
+        const BYTE* tag = profile.data() + offset;
+
+        std::string text;
+        if (std::memcmp(tag, "desc", 4) == 0) {
+            const DWORD count = ReadBigEndian32(tag + 8);
+            if (count > 0 && count <= length - 12) {
+                text.assign(reinterpret_cast<const char*>(tag + 12), count - 1);
+            }
+        } else if (std::memcmp(tag, "mluc", 4) == 0) {
+            const DWORD records = ReadBigEndian32(tag + 8);
+            if (records > 0) {
+                const DWORD count = ReadBigEndian32(tag + 20);
+                const DWORD charsOffset = ReadBigEndian32(tag + 24);
+                if (charsOffset <= length && count <= length - charsOffset) {
+                    for (DWORD k = 0; k + 1 < count; k += 2) {
+                        const unsigned c = (static_cast<unsigned>(tag[charsOffset + k]) << 8) |
+                                           tag[charsOffset + k + 1];
+                        if (c > 0 && c < 128) text.push_back(static_cast<char>(c));
+                    }
+                }
+            }
+        }
+
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text.find("srgb") != std::string::npos;
+    }
+    return false;
+}
+
 // True when the frame carries a real ICC profile that we should transform from.
-// An EXIF colorspace of sRGB (1) needs no transform.
+// An EXIF colorspace of sRGB (1) needs no transform, and neither does an embedded
+// sRGB profile: the transform is the identity, but WIC charges for it (about 60% on
+// top of a 10 MP JPEG decode on this machine).
 bool GetSourceColorContext(IWICImagingFactory* factory, IWICBitmapFrameDecode* frame,
                            IWICColorContext** out) {
     UINT count = 0;
@@ -65,6 +124,7 @@ bool GetSourceColorContext(IWICImagingFactory* factory, IWICBitmapFrameDecode* f
         WICColorContextType type = WICColorContextUninitialized;
         if (FAILED(contexts[i]->GetType(&type))) continue;
         if (type == WICColorContextProfile) {
+            if (IsSrgbProfile(contexts[i].Get())) return false;  // identity transform
             contexts[i].CopyTo(out);
             return true;
         }
