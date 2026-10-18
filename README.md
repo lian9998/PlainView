@@ -86,8 +86,10 @@ must be immediate, without disk use and without unbounded RAM". What is implemen
 - **Keyed by path + size + last-write time**, so an edited file is never served stale.
 - **Idle prefetch.** Once an image is on screen and the folder list is ready, the app
   waits ~0.7 s. If you are still on that image, the previous and next files are decoded
-  in the background at screen size (lowest priority). Any navigation cancels the pending
-  timer and any queued prefetch, so fast arrow-key scrubbing never wastes work.
+  in the background at screen size. Any navigation cancels the pending timer and drops
+  queued prefetches, so fast arrow-key scrubbing never wastes work.
+- **Prefetch cannot delay navigation.** It runs on its own decode thread; the thread that
+  serves the file you just asked for is never behind a background decode.
 - **Full resolution is lazy.** Opening a cached file is instant; the full-resolution
   decode is only requested when you zoom past what the cached copy can resolve. That
   keeps both RAM and time-to-pixels low while browsing.

@@ -137,6 +137,7 @@ private:
     };
 
     void ThreadMain();
+    void PrefetchThreadMain();
     void HandleOpen(const Job& job);
     void HandleTile(const Job& job);
     void HandlePrefetch(const Job& job);
@@ -151,7 +152,15 @@ private:
     std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<Job> queue_;
-    bool stopping_ = false;
+
+    // Prefetching runs on its own thread so that an in-flight background decode
+    // can never delay opening the file the user just asked for.
+    std::thread prefetchThread_;
+    std::mutex prefetchMutex_;
+    std::condition_variable prefetchCv_;
+    std::deque<Job> prefetchQueue_;
+
+    std::atomic<bool> stopping_{false};
 
     std::atomic<UINT> currentGeneration_{0};
 

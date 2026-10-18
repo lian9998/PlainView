@@ -434,17 +434,24 @@ void Decoder::Start() {
     if (thread_.joinable()) return;
     stopping_ = false;
     thread_ = std::thread(&Decoder::ThreadMain, this);
+    prefetchThread_ = std::thread(&Decoder::PrefetchThreadMain, this);
 }
 
 void Decoder::Stop() {
+    if (!thread_.joinable()) return;
+    stopping_ = true;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!thread_.joinable()) return;
-        stopping_ = true;
         queue_.clear();
     }
+    {
+        std::lock_guard<std::mutex> lock(prefetchMutex_);
+        prefetchQueue_.clear();
+    }
     cv_.notify_all();
+    prefetchCv_.notify_all();
     thread_.join();
+    if (prefetchThread_.joinable()) prefetchThread_.join();
 }
 
 void Decoder::Reset(UINT generation) {
@@ -453,7 +460,12 @@ void Decoder::Reset(UINT generation) {
         std::lock_guard<std::mutex> lock(mutex_);
         queue_.clear();
     }
+    {
+        std::lock_guard<std::mutex> lock(prefetchMutex_);
+        prefetchQueue_.clear();
+    }
     cv_.notify_all();
+    prefetchCv_.notify_all();
 }
 
 void Decoder::RequestOpen(const std::wstring& path, UINT generation, UINT maxTextureEdge,
@@ -475,22 +487,21 @@ void Decoder::RequestOpen(const std::wstring& path, UINT generation, UINT maxTex
 
 void Decoder::RequestPrefetch(const std::wstring& path, UINT generation, UINT maxEdge) {
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (queue_.size() >= 16) return;
+        std::lock_guard<std::mutex> lock(prefetchMutex_);
+        if (prefetchQueue_.size() >= 4) return;
         Job job;
         job.type = Job::Type::Prefetch;
         job.path = path;
         job.generation = generation;
         job.maxEdge = maxEdge;
-        queue_.push_back(std::move(job));
+        prefetchQueue_.push_back(std::move(job));
     }
-    cv_.notify_one();
+    prefetchCv_.notify_one();
 }
 
 void Decoder::DropQueuedPrefetches() {
-    queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
-                                [](const Job& job) { return job.type == Job::Type::Prefetch; }),
-                 queue_.end());
+    std::lock_guard<std::mutex> lock(prefetchMutex_);
+    prefetchQueue_.clear();
 }
 
 void Decoder::RequestTile(const std::wstring& path, UINT generation, UINT tileX, UINT tileY,
@@ -511,7 +522,7 @@ void Decoder::RequestTile(const std::wstring& path, UINT generation, UINT tileX,
 }
 
 bool Decoder::IsCancelled(UINT generation) const {
-    return stopping_ || currentGeneration_.load() != generation;
+    return stopping_.load() || currentGeneration_.load() != generation;
 }
 
 void Decoder::ThreadMain() {
@@ -529,11 +540,29 @@ void Decoder::ThreadMain() {
         if (IsCancelled(job.generation)) continue;
 
         if (job.type == Job::Type::Open) HandleOpen(job);
-        else if (job.type == Job::Type::Tile) HandleTile(job);
-        else HandlePrefetch(job);
+        else HandleTile(job);
     }
 
     session_.reset();
+    if (SUCCEEDED(hrCom)) CoUninitialize();
+}
+
+void Decoder::PrefetchThreadMain() {
+    const HRESULT hrCom = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+    for (;;) {
+        Job job;
+        {
+            std::unique_lock<std::mutex> lock(prefetchMutex_);
+            prefetchCv_.wait(lock, [this] { return stopping_.load() || !prefetchQueue_.empty(); });
+            if (stopping_) break;
+            job = std::move(prefetchQueue_.front());
+            prefetchQueue_.pop_front();
+        }
+        if (IsCancelled(job.generation)) continue;
+        HandlePrefetch(job);
+    }
+
     if (SUCCEEDED(hrCom)) CoUninitialize();
 }
 
