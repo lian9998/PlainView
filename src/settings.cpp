@@ -80,6 +80,18 @@ bool ParseString(const std::string& raw, std::string& out) {
     return true;
 }
 
+bool ParseBool(const std::string& raw, bool& out) {
+    if (raw == "true") {
+        out = true;
+        return true;
+    }
+    if (raw == "false") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
 int HexDigit(char c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -177,6 +189,14 @@ bool LoadSettings(AppSettings& out) {
             else if (text == "fit" || text == "Fit") out.initialSizing = AppSettings::InitialSizing::Fit;
         }
     }
+    if (FindMember(json, "doubleClickFill", raw)) {
+        bool value = false;
+        if (ParseBool(raw, value)) out.doubleClickFill = value;
+    }
+    if (FindMember(json, "doubleEscQuits", raw)) {
+        bool value = false;
+        if (ParseBool(raw, value)) out.doubleEscQuits = value;
+    }
     return true;
 }
 
@@ -203,7 +223,11 @@ bool SaveSettings(const AppSettings& settings) {
     text += FormatColor(settings.background);
     text += "\",\n  \"initialSizing\": \"";
     text += settings.initialSizing == AppSettings::InitialSizing::Fit ? "fit" : "actual";
-    text += "\"\n}\n";
+    text += "\",\n  \"doubleClickFill\": ";
+    text += settings.doubleClickFill ? "true" : "false";
+    text += ",\n  \"doubleEscQuits\": ";
+    text += settings.doubleEscQuits ? "true" : "false";
+    text += "\n}\n";
 
     const std::wstring path = SettingsPath();
     const std::wstring temp = path + L".tmp";

@@ -23,6 +23,12 @@ struct AppSettings {
     int prefetchDepth = 3;
     D2D1_COLOR_F background = D2D1::ColorF(0.0f, 0.0f, 0.0f, 1.0f);
     InitialSizing initialSizing = InitialSizing::Fit;
+
+    // Optional input behaviours, both on by default and switchable in Options.
+    // Double-click toggles between fit (whole image) and fill (cover the window).
+    bool doubleClickFill = true;
+    // Two Esc presses within 400 ms close the viewer.
+    bool doubleEscQuits = true;
 };
 
 std::wstring SettingsDirectory();  // %LOCALAPPDATA%\PlainView

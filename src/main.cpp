@@ -54,6 +54,8 @@ struct App {
     bool menuVisible = false;
     Viewer viewer;
     AppSettings settings;
+    // Timestamp of the previous Esc press, for double-Esc-to-quit.
+    double lastEscapeMs = -1.0e9;
 
     bool bench = false;
     std::wstring reportPath;
@@ -404,8 +406,24 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
                 app->viewer.OnLButtonUp(point);
             }
             return 0;
+        case WM_LBUTTONDBLCLK:
+            if (app && app->settings.doubleClickFill) app->viewer.ToggleFill();
+            return 0;
         case WM_KEYDOWN:
-            if (app) app->viewer.OnKeyDown(static_cast<UINT>(wParam));
+            if (app) {
+                if (wParam == VK_ESCAPE && app->settings.doubleEscQuits) {
+                    // Ignore auto-repeat, so holding Esc is one press, not many.
+                    if ((lParam & (1L << 30)) == 0) {
+                        const double now = NowMs();
+                        if (now - app->lastEscapeMs <= 400.0) {
+                            PostMessageW(hwnd, WM_CLOSE, 0, 0);
+                        }
+                        app->lastEscapeMs = now;
+                    }
+                    return 0;
+                }
+                app->viewer.OnKeyDown(static_cast<UINT>(wParam));
+            }
             return 0;
         case WM_DROPFILES: {
             auto drop = reinterpret_cast<HDROP>(wParam);
@@ -542,7 +560,7 @@ int RunGui(App& app, int argc, wchar_t** argv) {
 
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
-    windowClass.style = CS_HREDRAW | CS_VREDRAW;
+    windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     windowClass.lpfnWndProc = WndProc;
     windowClass.hInstance = app.instance;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);

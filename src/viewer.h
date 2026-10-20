@@ -60,6 +60,9 @@ public:
 
     HRESULT Draw(ID2D1RenderTarget* target, D2D1_SIZE_F size);
     void SetZoom(double zoom);
+    // Double-click: cover the window (fill) or show the whole image (fit).
+    void ToggleFill();
+    bool FillMode() const { return fillMode_; }
 
     void Navigate(int delta);
     bool CanNavigate() const { return folder_.names.size() > 1; }
@@ -95,6 +98,10 @@ private:
 
     bool CreateBitmap(const PixelBuffer& pixels, ComPtr<ID2D1Bitmap>& out);
     void ApplyInitialView(D2D1_SIZE_F size);
+    double FitScale(D2D1_SIZE_F size) const;
+    double FillScale(D2D1_SIZE_F size) const;
+    bool AtHorizontalEdge(int direction) const;
+    bool PanByScreen(double dx, double dy);
     void ClampCenter(D2D1_SIZE_F size);
     void ZoomAt(D2D1_POINT_2F cursor, double factor);
     void EnsureFolderScan();
@@ -156,6 +163,9 @@ private:
     static constexpr size_t kMaxTileRequests = 6;
 
     bool fitMode_ = true;
+    // Fill (cover) mode: the image covers the window, arrows pan by two thirds of
+    // a view, and left/right at the edge navigate to another image.
+    bool fillMode_ = false;
     double zoom_ = 1.0;
     D2D1_POINT_2F center_ = D2D1::Point2F(0.0f, 0.0f);
 

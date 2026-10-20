@@ -139,6 +139,10 @@ INT_PTR CALLBACK OptionsProc(HWND dialog, UINT message, WPARAM wParam, LPARAM lP
             SetDlgItemTextW(dialog, IDC_BGHEX, FormatColorHex(context->settings.background).c_str());
             SetDlgItemInt(dialog, IDC_PREFETCH, static_cast<UINT>(context->settings.prefetchDepth),
                           FALSE);
+            CheckDlgButton(dialog, IDC_DOUBLECLICK,
+                           context->settings.doubleClickFill ? BST_CHECKED : BST_UNCHECKED);
+            CheckDlgButton(dialog, IDC_DOUBLEESC,
+                           context->settings.doubleEscQuits ? BST_CHECKED : BST_UNCHECKED);
 
             const bool unlimited =
                 context->settings.cacheBudgetMB == kCacheBudgetUnlimitedMB;
@@ -213,6 +217,10 @@ INT_PTR CALLBACK OptionsProc(HWND dialog, UINT message, WPARAM wParam, LPARAM lP
                         IsDlgButtonChecked(dialog, IDC_SIZING_FIT) == BST_CHECKED
                             ? AppSettings::InitialSizing::Fit
                             : AppSettings::InitialSizing::Actual;
+                    context->settings.doubleClickFill =
+                        IsDlgButtonChecked(dialog, IDC_DOUBLECLICK) == BST_CHECKED;
+                    context->settings.doubleEscQuits =
+                        IsDlgButtonChecked(dialog, IDC_DOUBLEESC) == BST_CHECKED;
                     EndDialog(dialog, IDOK);
                     return TRUE;
                 }

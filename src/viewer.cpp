@@ -280,9 +280,11 @@ D2D1_SIZE_F Viewer::WindowSize() const { return target_ ? target_->GetSize() : D
 
 void Viewer::ApplyInitialView(D2D1_SIZE_F size) {
     if (!hasImage_ || size.width <= 0.0f || size.height <= 0.0f) return;
-    if (settings_.initialSizing == AppSettings::InitialSizing::Fit) {
-        zoom_ = std::min(static_cast<double>(size.width) / imageWidth_,
-                         static_cast<double>(size.height) / imageHeight_);
+    if (fillMode_) {
+        zoom_ = FillScale(size);
+        fitMode_ = true;
+    } else if (settings_.initialSizing == AppSettings::InitialSizing::Fit) {
+        zoom_ = FitScale(size);
         fitMode_ = true;
     } else {
         zoom_ = 1.0;
@@ -291,6 +293,19 @@ void Viewer::ApplyInitialView(D2D1_SIZE_F size) {
     center_ = D2D1::Point2F(static_cast<float>(imageWidth_) / 2.0f,
                             static_cast<float>(imageHeight_) / 2.0f);
     ClampCenter(size);
+    if (previewOnly_ && zoom_ > cachedScale_ * 1.02) RequestFullResolution();
+}
+
+double Viewer::FitScale(D2D1_SIZE_F size) const {
+    if (imageWidth_ == 0 || imageHeight_ == 0) return 1.0;
+    return std::min(static_cast<double>(size.width) / imageWidth_,
+                    static_cast<double>(size.height) / imageHeight_);
+}
+
+double Viewer::FillScale(D2D1_SIZE_F size) const {
+    if (imageWidth_ == 0 || imageHeight_ == 0) return 1.0;
+    return std::max(static_cast<double>(size.width) / imageWidth_,
+                    static_cast<double>(size.height) / imageHeight_);
 }
 
 UINT Viewer::PreviewEdge() const {
@@ -354,9 +369,29 @@ void Viewer::SetZoom(double zoom) {
     if (!hasImage_) return;
     zoom_ = std::clamp(zoom, kMinZoom, kMaxZoom);
     fitMode_ = false;
+    fillMode_ = false;
     center_ = D2D1::Point2F(static_cast<float>(imageWidth_) / 2.0f,
                             static_cast<float>(imageHeight_) / 2.0f);
     ClampCenter(WindowSize());
+}
+
+void Viewer::ToggleFill() {
+    if (!hasImage_) return;
+    const D2D1_SIZE_F size = WindowSize();
+    fillMode_ = !fillMode_;
+    fitMode_ = true;
+    if (fillMode_) {
+        zoom_ = FillScale(size);
+        // Keep the centre, so the switch feels like zooming in place; ClampCenter
+        // then pushes the edges against the window.
+    } else {
+        zoom_ = FitScale(size);
+        center_ = D2D1::Point2F(static_cast<float>(imageWidth_) / 2.0f,
+                                static_cast<float>(imageHeight_) / 2.0f);
+    }
+    ClampCenter(size);
+    if (previewOnly_ && zoom_ > cachedScale_ * 1.02) RequestFullResolution();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 void Viewer::ClampCenter(D2D1_SIZE_F size) {
@@ -373,6 +408,35 @@ void Viewer::ClampCenter(D2D1_SIZE_F size) {
     } else {
         center_.y = static_cast<float>(std::clamp<double>(center_.y, halfH, imageHeight_ - halfH));
     }
+}
+
+bool Viewer::AtHorizontalEdge(int direction) const {
+    if (!hasImage_ || zoom_ <= 0.0) return true;
+    const D2D1_SIZE_F size = WindowSize();
+    if (size.width <= 0.0f) return true;
+    // Nothing to scroll horizontally (or less than half a pixel): both edges are here.
+    if (static_cast<double>(imageWidth_) * zoom_ <= size.width + 0.5) return true;
+
+    const double halfWidth = size.width / (2.0 * zoom_);
+    if (direction < 0) return center_.x <= halfWidth + 0.5;
+    return center_.x >= static_cast<double>(imageWidth_) - halfWidth - 0.5;
+}
+
+bool Viewer::PanByScreen(double dx, double dy) {
+    if (!hasImage_ || zoom_ <= 0.0) return false;
+    const D2D1_SIZE_F size = WindowSize();
+    if (size.width <= 0.0f) return false;
+
+    const double beforeX = center_.x;
+    const double beforeY = center_.y;
+    center_.x += static_cast<float>(dx / zoom_);
+    center_.y += static_cast<float>(dy / zoom_);
+    ClampCenter(size);
+
+    const bool moved = std::fabs(center_.x - beforeX) > 0.25 ||
+                       std::fabs(center_.y - beforeY) > 0.25;
+    if (moved && hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    return moved;
 }
 
 void Viewer::ZoomAt(D2D1_POINT_2F cursor, double factor) {
@@ -392,6 +456,7 @@ void Viewer::ZoomAt(D2D1_POINT_2F cursor, double factor) {
     center_.x = static_cast<float>(imageX - dx / zoom_);
     center_.y = static_cast<float>(imageY - dy / zoom_);
     fitMode_ = false;
+    fillMode_ = false;  // a manual zoom is no longer fill or fit
     ClampCenter(size);
     if (previewOnly_ && zoom_ > cachedScale_ * 1.02) RequestFullResolution();
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -431,8 +496,25 @@ void Viewer::OnLButtonUp(POINT) {
 }
 
 void Viewer::OnKeyDown(UINT vk) {
-    if (vk == VK_LEFT) Navigate(-1);
-    else if (vk == VK_RIGHT) Navigate(1);
+    if (vk == VK_LEFT || vk == VK_RIGHT) {
+        const int direction = vk == VK_LEFT ? -1 : 1;
+        if (fillMode_ && hasImage_) {
+            // Fill mode scrolls by two thirds of a view. At the horizontal edge the
+            // key falls through to the previous/next image, as it does in fit mode.
+            const double step = WindowSize().width * 2.0 / 3.0;
+            if (!AtHorizontalEdge(direction) && PanByScreen(direction * step, 0.0)) return;
+            Navigate(direction);
+            return;
+        }
+        Navigate(direction);
+        return;
+    }
+    if (vk == VK_UP || vk == VK_DOWN) {
+        // Up and down only ever scroll; they never change the image.
+        if (!fillMode_ || !hasImage_) return;
+        const double step = WindowSize().height * 2.0 / 3.0;
+        PanByScreen(0.0, vk == VK_UP ? -step : step);
+    }
 }
 
 void Viewer::OnDropFiles(HDROP drop) {
