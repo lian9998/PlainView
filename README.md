@@ -24,7 +24,7 @@ album.
 
 ## Download and run
 
-- Take `PlainView-1.0.0-win64.zip` from the [releases page](https://github.com/lian9998/PlainView/releases).
+- Take the latest `PlainView-*-win64.zip` from the [releases page](https://github.com/lian9998/PlainView/releases).
 - Unpack it anywhere — a folder, a USB stick, `C:\Tools\PlainView`. There is no installer.
 - Run `PlainView.exe`.
 
@@ -45,6 +45,9 @@ downloaded.
 | Next / previous image | `→` / `←` — natural filename order (`image2` before `image10`), wrapping at the ends |
 | Zoom | Mouse wheel, around the cursor; 1.15× per notch by default |
 | Pan | Left-button drag |
+| Fill ↔ fit | Double-click: cover the window with the image, or show all of it |
+| Scroll (fill mode) | Arrow keys move by two-thirds of a view; `←`/`→` at the edge change image, `↑`/`↓` only scroll |
+| Quit | `Esc` `Esc` — two presses within 400 ms |
 | Menu bar | Hidden by default. `Alt` shows it, `Alt` again hides it |
 | Options | `Alt`, then `File → Options…` |
 
@@ -52,6 +55,13 @@ downloaded.
 PlainView.exe                      :: empty black window; open with Ctrl+O or drag & drop
 PlainView.exe "D:\photos\a.jpg"    :: open that file immediately
 ```
+
+In **fill** mode the image covers the window (edges are cropped) and the arrow keys
+scroll it by two-thirds of a view. `←` and `→` only leave the current image once the
+view is already at that edge, so paging through a folder still works; `↑` and `↓`
+never change image. Double-clicking again returns to **fit**, and a wheel zoom leaves
+fill mode for free zooming. Both the double-click gesture and double-`Esc` can be
+switched off in Options, together with the other optional input behaviours.
 
 ## What it does
 
@@ -62,6 +72,7 @@ PlainView.exe "D:\photos\a.jpg"    :: open that file immediately
 | Rendering | Direct2D HWND render target (GPU, with the platform's software fallback) |
 | First frame | The decode is requested before the Direct2D device is created, so GPU start-up overlaps it |
 | Fit | Fits the window on open, keeps the aspect ratio, re-fits on resize until you zoom |
+| Fill | Double-click covers the window; the arrow keys scroll by two-thirds of a view |
 | Zoom / pan | Wheel around the cursor; drag to pan; exact 1:1 once zoomed in |
 | EXIF | All eight orientation values applied during decode |
 | Colour | Embedded ICC profiles applied; an sRGB profile is recognised as the identity and skipped |
@@ -241,7 +252,9 @@ powershell -ExecutionPolicy Bypass -File tools\bench.ps1 -Runs 5 `
   "cacheBudgetMB": 256,
   "prefetchDepth": 3,
   "backgroundColor": "#000000",
-  "initialSizing": "fit"
+  "initialSizing": "fit",
+  "doubleClickFill": true,
+  "doubleEscQuits": true
 }
 ```
 
@@ -251,6 +264,8 @@ powershell -ExecutionPolicy Bypass -File tools\bench.ps1 -Runs 5 `
 - `backgroundColor` — `#RRGGBB`, opaque. An old `#AARRGGBB` value is still read,
   with the alpha byte ignored; backgrounds cannot be see-through.
 - `initialSizing` — `fit` or `actual` (100%).
+- `doubleClickFill` — double-click toggles fill (cover) and fit (contain).
+- `doubleEscQuits` — two `Esc` presses within 400 ms quit.
 
 Missing or malformed members keep their defaults; an unreadable file is ignored.
 
