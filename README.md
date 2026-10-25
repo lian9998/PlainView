@@ -33,9 +33,10 @@ linked statically, so no Visual C++ redistributable is needed. No administrator
 rights, and nothing is installed outside `%LOCALAPPDATA%\PlainView\` (and the
 per-user registry entries, only if you register it as a viewer).
 
-Release binaries are unsigned. Windows SmartScreen may ask for confirmation the
-first time; each release includes a `.sha256` file so you can check what you
-downloaded.
+Release binaries are signed with a throwaway self-signed certificate, which Windows
+does not trust: SmartScreen still shows an unknown publisher and offers **Run
+anyway**. Each release includes a `.sha256` file so you can check what you
+downloaded; only continue if you trust where it came from.
 
 ## Using it
 
@@ -242,6 +243,13 @@ powershell -ExecutionPolicy Bypass -File tools\bench.ps1 -Runs 5 `
     -ImageList "C:\photos\big.jpg;tests\out\demo.jpg"
 ```
 
+Self-sign a build with a throwaway certificate (it is not added to any trust
+store, so SmartScreen still treats the publisher as unknown):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\sign.ps1
+```
+
 ## Settings
 
 `%LOCALAPPDATA%\PlainView\settings.json`, written when you press OK in Options:
@@ -284,6 +292,7 @@ Missing or malformed members keep their defaults; an unreadable file is ignored.
 | `src/version.h` | version, used by the resource and the release script |
 | `src/app.rc` | menu, accelerators, dialog, manifest, version resource |
 | `tools/release.ps1` | portable release archive |
+| `tools/sign.ps1` | self-sign a build with an untrusted throwaway certificate |
 | `tools/bench.ps1` | repeated benchmark |
 | `docs/measurements.md` | detailed measurements and methodology |
 
@@ -302,7 +311,8 @@ obsolete work.
   slightly better at strong reductions.
 - Tiles are re-decoded when you pan away and back (there is no persistent cache,
   by design).
-- The build is unsigned, so SmartScreen may warn on first launch.
+- The build is signed with a self-signed certificate that Windows does not trust,
+  so SmartScreen warns about an unknown publisher.
 
 ## License
 
